@@ -1,0 +1,31 @@
+# Benchmark output-name adapter (SPEC.md §7.6, §4). A naming layer only —
+# it must never suppress a domain calculator or its warnings, in particular
+# the §3.9 Running of Vessel Lines calculator.
+#
+# Each entry maps an assignment output slot name onto the domain
+# CalculationResult attribute (== calculator name) that populates it.
+
+assignment_outputs:
+  light_dues:
+    calculator: light_dues
+
+  port_dues:
+    calculator: port_dues
+
+  towage_dues:
+    calculator: towage_dues
+
+  vts_dues:
+    calculator: vts_dues
+
+  pilotage_dues:
+    calculator: pilotage_dues
+
+  running_of_vessel_lines:
+    calculator: berthing_services
+    note: >
+      The supplied benchmark value of ZAR 19,639.50 reconciles exactly to
+      Tariff Book §3.8 Berthing Services (Other Ports), not to §3.9 Running of
+      Vessel Lines, which would give ZAR 3,309.12 for two services. The benchmark
+      figure is reported here; both sections are implemented separately in the
+      domain model.

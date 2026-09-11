@@ -1,0 +1,439 @@
+# Transnet National Ports Authority — Tariff Book, 23rd Edition
+# 1 April 2024 – 31 March 2025
+#
+# Extracted from Port_Tariff.pdf per SPEC.md §5.3. All `source.page` values are
+# the PRINTED page numbers in the book's own footer/header, not the PDF
+# viewer's page index (see SPEC.md header note).
+#
+# All rates are ex-VAT (VAT 15% noted on every page of the source and is never
+# applied in this system).
+#
+# Band interval convention (SPEC.md §5.4): `min_gt_exclusive` is EXCLUSIVE,
+# `max_gt_inclusive` is INCLUSIVE. A vessel at exactly the boundary GT falls
+# into the lower band. This resolves the source book's own printed overlap
+# at band edges (e.g. towage shows "2 001 to 10 000" and "10 000 to 50 000").
+#
+# `null` is written explicitly wherever the book prints "n/a" for a
+# port/band combination. It is distinct from a missing key.
+
+# ---------------------------------------------------------------------------
+# 7.1 Light dues — §1.1.1, page 9
+# Not port-specific: one national rate schedule. Not per service — charged
+# once per South African visit (subject to the 60-day coastal rule below).
+# ---------------------------------------------------------------------------
+light_dues:
+  source: {section: "1.1.1", page: 9}
+  rounding: ceil_per_100_t
+  per_service: false
+  scope: "Charged once per South African visit (per financial year for coastal billing), not per port call."
+
+  # "All other vessels" — this is the rate that applies to a foreign-flagged
+  # vessel calling at an SA port. Durban/SUDESTADA: 513 x 117.08 = 60,062.04.
+  foreign_and_other_vessels:
+    rate_per_100t: 117.08
+    minimum_fee: null   # none stated in the book for this rate
+
+  # Self-propelled vessels (and DEAT-licensed vessels), AT THEIR REGISTERED
+  # PORT ONLY. Annual rate charged on length overall. Not used by the
+  # reference case (foreign-flagged vessel calling, not at its registered port).
+  self_propelled_at_registered_port:
+    rate_per_metre_loa_per_financial_year: 24.64
+    minimum_fee: null
+
+  coastal_billing:
+    max_days_in_sa_waters: 60
+    note: >
+      Past 60 days in SA waters, a vessel is deemed coastal for light dues
+      purposes and is billed monthly instead of the single once-off payment.
+      Monthly coastal billing itself is not modelled in v1 — only the 60-day
+      threshold is carried as data. A bona fide coaster arriving from a
+      foreign port still pays full light dues at the first SA port of call,
+      so this does not change the reference-case calculation.
+
+  exemptions:
+    - saps
+    - sandf
+    - samsa
+    - sa_medical_research
+    - non_self_propelled_small_or_pleasure_vessel_not_for_gain
+    - vessel_at_anchorage_outside_port_except_single_buoy_mooring
+
+# ---------------------------------------------------------------------------
+# 7.2 Port dues — §4.1.1, pages 21–22
+# Not port-specific: one national rate schedule. Not per service.
+# ---------------------------------------------------------------------------
+port_dues:
+  source: {section: "4.1.1", page: 21}
+  rounding: pro_rata_time
+  per_service: false
+
+  # basic = ceil(GT/100) x basic_rate_per_100t
+  basic_rate_per_100t: 192.73
+  # incremental = ceil(GT/100) x incremental_rate_per_100t_per_day x chargeable_period_days
+  incremental_rate_per_100t_per_day: 57.79
+
+  small_vessel_minimum_fee:
+    amount: 470.98
+    source: {section: "4.1.1", page: 21}
+    note: >
+      Small and pleasure vessels resorting under §4.2, visiting a port other
+      than their registered port. Out of scope for a commercial vessel call
+      but retained here for completeness per SPEC.md §7.2.
+
+  # See §9.1 for stacking rules (interpretations recorded in README).
+  reductions:
+    not_cargo_working_or_coaster_or_passenger_or_small_vessel_away_from_home_port:
+      rate: 0.35
+      source: {section: "4.1.1", page: 21}
+      note: >
+        Alternatives, not cumulative: not engaged in cargo working (first 30
+        days only); OR bona fide coaster; OR passenger vessel; OR small
+        vessel under §4.2 visiting away from its registered port. Any one
+        qualifies; the reduction is 35% once.
+    bunkers_stores_water_only_stay_le_48h:
+      rate: 0.60
+      source: {section: "4.1.1", page: 21}
+      note: >
+        Call solely for bunkers and/or stores and/or water, and total stay
+        does not exceed 48 hours. Not enjoyed in addition to the 35%
+        reduction — the book does not name a winner. Interpretation (see
+        README): apply the 60% and drop the 35%.
+    liquid_bulk_tanker_hull_certification:
+      rate: 0.10
+      source: {section: "4.1.1", page: 22}
+      note: >
+        Liquid bulk tankers only: certified double hull, segregated ballast
+        tanks, or Green Award. Capped at 10% for any one or any combination.
+        Never applies to a dry bulk carrier.
+    stay_under_12_hours:
+      rate: 0.15
+      source: {section: "4.1.1", page: 22}
+      note: >
+        "In addition to other reductions that may be enjoyed." Interpretation
+        (see README): applied multiplicatively to the already-reduced
+        figure, not to the base — e.g. 35% then 15% gives 0.65 x 0.85 =
+        0.5525, not a flat 50%. No reference value confirms this.
+
+  long_stay_surcharge:
+    rate: 0.20
+    applies_to: incremental_component_only
+    condition: "In port longer than 30 days, neither engaged in cargo working nor undergoing repairs."
+    source: {section: "4.1.1", page: 21}
+
+  exemptions:
+    - saps
+    - sandf
+    - samsa
+    - sa_medical_research
+    - time_in_drydock_floating_dock_syncrolift_or_slipway
+    - small_vessel_under_section_4.2_at_its_registered_port
+    - fishing_vessel_licensed_deat_within_saldanha_sea_fisheries_act_area
+    - vessel_calling_second_time_returning_from_anchorage_on_port_order
+
+# ---------------------------------------------------------------------------
+# 7.3 Towage dues — §3.6, page 15 ("Tugs/Vessel assistance and/or attendance")
+# Per service (x2 for an arrival + a departure).
+# Column order in the book: Richards Bay | Durban | East London |
+# Port Elizabeth/Ngqura | Mossel Bay | Cape Town | Saldanha.
+# Port Elizabeth and Ngqura share one printed column; both get identical
+# entries below since they are distinct Port enum members.
+# ---------------------------------------------------------------------------
+towage:
+  source: {section: "3.6", page: 15}
+  rounding: ceil_per_100_t
+  per_service: true
+
+  ports:
+    richards_bay:
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  7001.67,  increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base: 13020.67,  increment_above_gt: 2000,   per_100t: 275.32}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 39999.88,  increment_above_gt: 10000,  per_100t: 101.08}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 79999.76,  increment_above_gt: 50000,  per_100t:  30.11}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 103999.70, increment_above_gt: 100000, per_100t:  21.50}
+
+    durban:  # Fully worked and verified in SPEC.md §7.3.
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  8140.00, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base: 12633.99, increment_above_gt: 2000,   per_100t: 268.99}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 38494.51, increment_above_gt: 10000,  per_100t:  84.95}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 73118.07, increment_above_gt: 50000,  per_100t:  32.24}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 93548.13, increment_above_gt: 100000, per_100t:  23.65}
+
+    east_london:
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  5622.16, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base:  8152.14, increment_above_gt: 2000,   per_100t: 200.97}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 27956.91, increment_above_gt: 10000,  per_100t:  66.67}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 55913.82, increment_above_gt: 50000,  per_100t:  25.80}
+        # Book prints n/a above 100 000 for East London.
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: null,     increment_above_gt: null,   per_100t: null}
+
+    port_elizabeth:  # shares the "Port Elizabeth/Ngqura" column with ngqura.
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  7206.98, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base: 11168.45, increment_above_gt: 2000,   per_100t: 237.53}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 32257.98, increment_above_gt: 10000,  per_100t:  73.10}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 64515.95, increment_above_gt: 50000,  per_100t:  21.50}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 82542.46, increment_above_gt: 100000, per_100t:  21.50}
+
+    ngqura:  # identical to port_elizabeth — shared column in the book.
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  7206.98, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base: 11168.45, increment_above_gt: 2000,   per_100t: 237.53}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 32257.98, increment_above_gt: 10000,  per_100t:  73.10}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 64515.95, increment_above_gt: 50000,  per_100t:  21.50}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 82542.46, increment_above_gt: 100000, per_100t:  21.50}
+
+    mossel_bay:
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  6316.53, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base:  8152.14, increment_above_gt: 2000,   per_100t: 173.37}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 25806.37, increment_above_gt: 10000,  per_100t:  60.21}
+        # Book prints n/a above 50 000 for Mossel Bay (and therefore above 100 000 too).
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: null,     increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: null,     increment_above_gt: null,   per_100t: null}
+
+    cape_town:
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  5411.47, increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base:  7898.57, increment_above_gt: 2000,   per_100t: 194.63}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 27741.85, increment_above_gt: 10000,  per_100t:  64.52}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 53978.33, increment_above_gt: 50000,  per_100t:  47.32}
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 79569.67, increment_above_gt: 100000, per_100t:  38.71}
+
+    saldanha:
+      bands:
+        - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   base:  9038.42,  increment_above_gt: null,   per_100t: null}
+        - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  base: 15378.78,  increment_above_gt: 2000,   per_100t: 327.43}
+        - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  base: 47311.70,  increment_above_gt: 10000,  per_100t: 103.23}
+        - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, base: 90322.33,  increment_above_gt: 50000,  per_100t:  27.97}
+        # NOTE — verified against the source PDF by two independent extraction
+        # passes (plain and layout-preserving): the printed per_100t for this
+        # band (47.32) is HIGHER than the previous band's (27.97), breaking
+        # the decrease-across-bands pattern that holds everywhere else in
+        # this table. This is in the book as printed; it is not a
+        # transcription error on our side. Flagged for manual attention
+        # (SPEC.md §10.5) rather than silently corrected.
+        - {min_gt_exclusive: 100000, max_gt_inclusive: null,   base: 111827.63, increment_above_gt: 100000, per_100t:  47.32}
+
+  # Craft (tug) allocation table, page 15. Same band convention. Used ONLY
+  # to define the "additional tug beyond allocation" surcharge threshold —
+  # SPEC.md §7.3 explicitly warns this is not a fee multiplier.
+  craft_allocation:
+    source: {section: "3.6", page: 15}
+    note: "0.50 represents a workboat, not half a tug."
+    bands:
+      - {min_gt_exclusive: 0,      max_gt_inclusive: 2000,   max_craft: 0.50}
+      - {min_gt_exclusive: 2000,   max_gt_inclusive: 10000,  max_craft: 1}
+      - {min_gt_exclusive: 10000,  max_gt_inclusive: 50000,  max_craft: 2}
+      - {min_gt_exclusive: 50000,  max_gt_inclusive: 100000, max_craft: 3}
+      - {min_gt_exclusive: 100000, max_gt_inclusive: null,   max_craft: 4}
+
+  surcharges:
+    source: {section: "3.6", page: 16}
+    out_of_hours:
+      rate: 0.25
+      condition: "Service commencing or terminating outside ordinary working hours."
+      derivable_from_input: true
+    additional_tug_beyond_allocation:
+      rate: 0.50
+      per: tug
+      condition: "A tug provided beyond the craft allocation, at the master's request or the Harbour Master's order."
+      derivable_from_input: false
+    vessel_without_own_power:
+      rate: 0.50
+      additional_tug_requested_rate: 1.00
+      condition: "Vessel serviced without her own power (100% if an extra tug is also requested for her)."
+      derivable_from_input: false
+    cancelled_after_standby_commenced:
+      rate: 0.25
+      note: "Fees as if the service had been performed, i.e. normal fees enhanced by 25%."
+      derivable_from_input: false
+    late_against_notified_time:
+      unit: per_tug_per_half_hour_or_part_thereof
+      all_ports_except_saldanha: 8050.76
+      saldanha: 10152.19
+      derivable_from_input: false
+
+# ---------------------------------------------------------------------------
+# 7.4 VTS dues — §2.1.1, page 11
+# RoundingMode.EXACT — the only tariff charged on exact GT, not per 100t.
+# Not per service — per port call.
+# ---------------------------------------------------------------------------
+vts:
+  source: {section: "2.1.1", page: 11}
+  rounding: exact
+  per_service: false
+  minimum_fee: 235.52
+
+  ports:
+    richards_bay:    {rate_per_gt: 0.54}
+    durban:          {rate_per_gt: 0.65}  # Verified: 51,255 x 0.65 = 33,315.75
+    east_london:     {rate_per_gt: 0.54}
+    ngqura:          {rate_per_gt: 0.54}
+    port_elizabeth:  {rate_per_gt: 0.54}
+    mossel_bay:      {rate_per_gt: 0.54}
+    cape_town:       {rate_per_gt: 0.54}
+    saldanha:        {rate_per_gt: 0.65}
+
+  exemptions:
+    - saps
+    - sandf
+    - samsa
+    - sa_medical_research
+    - vessel_returning_from_anchorage_on_harbour_master_order
+    - small_or_pleasure_vessel_under_section_4.2
+
+# ---------------------------------------------------------------------------
+# 7.5 Pilotage dues — §3.3, page 13
+# Per service (x2 here). Compulsory at all eight commercial ports.
+# Column order in the book: Richards Bay | Durban | Port Elizabeth/Ngqura |
+# Cape Town | Saldanha | Other. East London and Mossel Bay have no column
+# of their own and fall under "Other".
+# ---------------------------------------------------------------------------
+pilotage:
+  source: {section: "3.3", page: 13}
+  rounding: ceil_per_100_t
+  per_service: true
+
+  ports:
+    richards_bay:    {base_fee: 30960.46, per_100t: 10.93}
+    durban:          {base_fee: 18608.61, per_100t:  9.72}  # Verified in SPEC.md §7.5.
+    east_london:     {base_fee:  6547.45, per_100t: 10.49}  # "Other" column.
+    ngqura:          {base_fee:  8970.00, per_100t: 14.33}  # shared PE/Ngqura column.
+    port_elizabeth:  {base_fee:  8970.00, per_100t: 14.33}  # shared PE/Ngqura column.
+    mossel_bay:      {base_fee:  6547.45, per_100t: 10.49}  # "Other" column.
+    cape_town:       {base_fee:  6342.39, per_100t: 10.20}
+    saldanha:        {base_fee:  9673.57, per_100t: 13.66}
+
+  surcharges:
+    source: {section: "3.3", page: 13}
+    standard_50pct:
+      rate: 0.50
+      conditions:
+        - "Service terminates or commences outside ordinary working hours."
+        - "Vessel not ready 30 minutes after notified time, or 30 minutes after the pilot boarded (whichever later)."
+        - "Cancellation within 30 minutes of the notified time, with the pilot not yet boarded."
+      note: "Cannot fire at the six 24-hour ports (§8.3) via the out-of-hours condition — see Ordinary Working Hours."
+    durban_cancellation_window:
+      source: {section: "3.3", page: 14}
+      rate: 0.50
+      condition: "Cancellation within 60 minutes of the notified time, with the pilot not yet boarded (Durban only, replacing the standard 30-minute window)."
+
+  plo_duties:
+    source: {section: "3.3", page: 14}
+    rate_per_hour: 886.20
+    applicability: "Saldanha and tankers only, pilot remaining aboard during the stay."
+
+  exemptions:
+    - "saps_and_sandf_unless_pilotage_requested"
+
+# ---------------------------------------------------------------------------
+# 7.6 Berthing services — §3.8, page 18
+# This is the calculator that actually produces the assignment's
+# "running of vessel lines dues" benchmark figure. See adapter.py /
+# config/assignment_mapping.yaml (Stage 2) and README §3.8/§3.9 mapping.
+# Per service (x2 here). Fires on every marine service (berthing/unberthing).
+# Column order: Richards Bay | Port Elizabeth/Ngqura | Cape Town | Saldanha |
+# Other Ports. Durban, East London and Mossel Bay fall under "Other Ports".
+# ---------------------------------------------------------------------------
+berthing_services:
+  source: {section: "3.8", page: 18}
+  rounding: ceil_per_100_t
+  per_service: true
+
+  ports:
+    richards_bay:    {base_fee: 3175.89, per_100t: 13.46}
+    durban:          {base_fee: 2801.91, per_100t: 13.68}  # "Other Ports" column; verified in SPEC.md §7.6.
+    east_london:     {base_fee: 2801.91, per_100t: 13.68}  # "Other Ports" column.
+    ngqura:          {base_fee: 3838.62, per_100t: 18.72}  # shared PE/Ngqura column.
+    port_elizabeth:  {base_fee: 3838.62, per_100t: 18.72}  # shared PE/Ngqura column.
+    mossel_bay:      {base_fee: 2801.91, per_100t: 13.68}  # "Other Ports" column.
+    cape_town:       {base_fee: 3052.33, per_100t: 14.92}
+    saldanha:        {base_fee: 4006.34, per_100t: 16.97}
+
+  surcharges:
+    source: {section: "3.8", page: 18}
+    standard_50pct:
+      rate: 0.50
+      conditions:
+        - "Service terminates or commences outside ordinary working hours."
+        - "Cancellation of standby, at any time after standby has commenced."
+        - "Vessel arrives or departs 30 minutes or more after the notified time."
+
+  tanker_attendance_mossel_bay_saldanha_per_hour: 1267.83
+
+# ---------------------------------------------------------------------------
+# §3.9 Running of vessel lines — page 19.
+#
+# THE SEMANTIC MISMATCH (see SPEC.md §7.6 and README): the assignment's
+# "running of vessel lines dues" benchmark figure does NOT reconcile to this
+# section — it reconciles to §3.8 Berthing Services above. This section is
+# modelled and its calculator is implemented (Stage 2), but per SPEC.md §7.6
+# item 3, its charge is PARSED, NOT CALCULATED in v1: gated on
+# `mooring_boat_used`, it must produce a warning rather than a computed
+# amount. Column order: Port Elizabeth/Ngqura | Cape Town | Saldanha |
+# Other Ports. Durban, Richards Bay, East London and Mossel Bay fall under
+# "Other Ports".
+# ---------------------------------------------------------------------------
+running_of_vessel_lines:
+  source: {section: "3.9", page: 19}
+  rounding: ceil_per_100_t   # Not applicable in v1 — no GT-based component; retained for schema symmetry.
+  per_service: true
+  status: parsed_not_calculated
+  note: >
+    v1 does not calculate this charge. If VesselCall.mooring_boat_used is
+    true, the result must carry a warning that a §3.9 charge applies but is
+    not computed in this version (SPEC.md §7.6 item 3).
+
+  # "Per service" and "if the service terminates/commences outside ordinary
+  # working hours, minimum" — two distinct printed fee lines per port.
+  ports:
+    richards_bay:    {per_service: 1654.56, outside_hours_minimum: 3309.05}  # "Other Ports" column.
+    durban:          {per_service: 1654.56, outside_hours_minimum: 3309.05}  # "Other Ports" column; verified figure in SPEC.md §7.6.
+    east_london:     {per_service: 1654.56, outside_hours_minimum: 3309.05}  # "Other Ports" column.
+    ngqura:          {per_service: 2266.73, outside_hours_minimum: 4533.42}  # shared PE/Ngqura column.
+    port_elizabeth:  {per_service: 2266.73, outside_hours_minimum: 4533.42}  # shared PE/Ngqura column.
+    mossel_bay:      {per_service: 1654.56, outside_hours_minimum: 3309.05}  # "Other Ports" column.
+    cape_town:       {per_service: 2370.84, outside_hours_minimum: 3309.05}
+    saldanha:        {per_service: 2085.59, outside_hours_minimum: 4171.18}
+
+  # Second printed table (same page), for late arrival/departure: charges
+  # per hour or part thereof from the notified time until service is
+  # complete. Identical to the table above except Cape Town's
+  # outside-hours-minimum figure differs in the book (4 741.69 vs 3 309.05).
+  late_arrival_departure_per_hour:
+    richards_bay:    {per_service: 1654.56, outside_hours_minimum: 3309.05}
+    durban:          {per_service: 1654.56, outside_hours_minimum: 3309.05}
+    east_london:     {per_service: 1654.56, outside_hours_minimum: 3309.05}
+    ngqura:          {per_service: 2266.73, outside_hours_minimum: 4533.42}
+    port_elizabeth:  {per_service: 2266.73, outside_hours_minimum: 4533.42}
+    mossel_bay:      {per_service: 1654.56, outside_hours_minimum: 3309.05}
+    cape_town:       {per_service: 2370.84, outside_hours_minimum: 4741.69}
+    saldanha:        {per_service: 2085.59, outside_hours_minimum: 4171.18}
+
+  cancelled_after_standby_commenced:
+    minimum_hours: 2
+    per_hour_or_part_thereof: 1654.56
+
+  saldanha_remooring_without_tug_or_pilot_per_service: 4739.14
+
+# ---------------------------------------------------------------------------
+# 9.4 Marine services incentive — §3.2, page 12
+# Volume discount per shipping line, based on national call counts. The
+# VesselCall model carries no shipping-line identity or call-count field, so
+# this can never be evaluated from the supplied input in v1 — included here
+# for completeness only per SPEC.md §9.4. Applies to pilotage, craft
+# assistance (towage) and berthing services.
+# ---------------------------------------------------------------------------
+marine_services_incentive:
+  source: {section: "3.2", page: 12}
+  status: not_supported_by_input
+  applies_to: [pilotage, towage, berthing_services]
+  thresholds:
+    - {vessel_cargo_type: container,     threshold_calls: 500, discount_per_step: 0.01, calls_per_step: 50, max_calls_for_discount: 1500}
+    - {vessel_cargo_type: auto_carriers, threshold_calls: 100, discount_per_step: 0.01, calls_per_step: 10, max_calls_for_discount: 300}
+    - {vessel_cargo_type: break_bulk,    threshold_calls: 100, discount_per_step: 0.01, calls_per_step: 10, max_calls_for_discount: 300}
+    - {vessel_cargo_type: dry_bulk,      threshold_calls: 100, discount_per_step: 0.01, calls_per_step: 10, max_calls_for_discount: 300}
+    - {vessel_cargo_type: liquid_bulk,   threshold_calls: 100, discount_per_step: 0.01, calls_per_step: 10, max_calls_for_discount: 300}
