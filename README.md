@@ -339,10 +339,18 @@ Roughly a hundred numbers were extracted from `Port_Tariff.pdf` into
 reference case or the automated tests. **The towage table on page 15 in
 particular should be checked cell-by-cell against the source PDF by
 hand** before this config is trusted for any port/GT combination beyond
-what's tested here. This was done once during the build (via two
-independent extraction passes, catching the Saldanha anomaly noted in §5)
-but is not re-verified by any automated test, and should be repeated if
-the config is ever hand-edited.
+what's tested here. This is not re-verified by any automated test, and
+should be repeated if the config is ever hand-edited.
+
+**Status: done, twice, independently, on 2026-09-12.** First via two
+independent text-extraction passes during the build (plain-text and
+layout-preserving), which is what caught the Saldanha anomaly noted in
+§5. Then via an actual rendered page image of printed page 15, read cell
+by cell against every value in `towage.ports` and `towage.craft_allocation`
+— confirming all of it, including that the Saldanha anomaly is genuinely
+printed that way and not an artifact of text extraction. **The repo
+owner also independently checked page 15 against the config by hand**,
+separately from the two passes above.
 
 ---
 
