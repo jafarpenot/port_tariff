@@ -61,7 +61,8 @@ tariffs/
     modifiers.py     # reductions, surcharges, exemptions
     engine.py        # the single entry point, calculate()
     adapter.py       # assignment output mapping
-tests/               # five layers — see §6
+    nlp.py           # v2: parse_vessel_request() — free text -> validated VesselCall (§11)
+tests/               # five v1 layers (§6) + tests/test_nlp_parser.py for v2
 notebooks/exploration.ipynb   # optional; a consumer of the package, not part of the graded path
 ```
 
@@ -290,7 +291,8 @@ Per `SPEC.md` §1 and §7.6, none of the following are built, stubbed with
   free-text description into a `VesselCall`). `VesselCall` is built by
   hand in v1 and in the notebook; its field set is already complete
   enough to carry what a future parser would populate (the event flags in
-  particular — see below).
+  particular — see below). **Built in v2 — see §11.** The v1 engine
+  itself was not touched to enable this; §11 explains the boundary.
 - **Any HTTP/API layer.** `calculate()` is a plain function; a FastAPI
   layer is a v2 concern that should wrap it without modification.
 - **Towage's flat late-arrival fee** (per tug, per half-hour) and the
@@ -316,19 +318,23 @@ this document, and every `TariffResult.amount`, are ex-VAT ZAR.
 
 ## 9. Production extensions (brief)
 
-Sketched, not built, for v2:
-
 - **LLM parsing layer** turning a free-text vessel/voyage description
   into a `VesselCall` — the model's tri-state event flags
   (`mooring_boat_used`, `additional_tug_requested`,
   `service_cancelled_after_standby`, `late_against_notified_time`, etc.)
   exist specifically so such a parser has somewhere to put what it finds,
-  without any change to the engine.
+  without any change to the engine. **Built in v2 — see §11.**
+
+Sketched, not built, for v3:
+
 - **A FastAPI endpoint** wrapping `tariffs.engine.calculate()` directly.
 - **External enrichment** (AIS, vessel registries, port-call history) to
   resolve currently-unresolvable flags automatically — e.g. confirming
   bona fide coaster status, hull certification, or a vessel's registered
   port, instead of requiring them as explicit input.
+- **Interactive resolution** of fields the v2 parser leaves `None` — see
+  §11's LangGraph discussion for why this, specifically, is what would
+  justify introducing a graph.
 
 ---
 
@@ -351,6 +357,137 @@ by cell against every value in `towage.ports` and `towage.craft_allocation`
 printed that way and not an artifact of text extraction. **The repo
 owner also independently checked page 15 against the config by hand**,
 separately from the two passes above.
+
+---
+
+## 11. v2: Natural-language parsing layer
+
+One pure function, `tariffs.nlp.parse_vessel_request(request_text) -> ParsedVesselCall`,
+turns free text into a validated `VesselCall`. `ParsedVesselCall.vessel_call`
+then goes straight into `tariffs.engine.calculate()` — **the v1 engine is
+untouched**; this layer only produces the input the engine already
+accepted.
+
+```bash
+uv sync --group nlp          # installs langchain-anthropic (not a default group)
+export ANTHROPIC_API_KEY=...  # required at runtime; never hardcoded
+```
+
+```python
+from tariffs.nlp import parse_vessel_request
+from tariffs.engine import calculate
+
+parsed = parse_vessel_request(
+    "SUDESTADA, a bulk carrier, called at the Port of Durban. GT 51,255. "
+    "Number of Operations: 2."
+)
+parsed.trace_df()             # one row per field actually read, with evidence
+result = calculate(parsed.vessel_call)
+```
+
+### The extraction contract
+
+- **Extraction, not inference.** The LLM populates a field only when the
+  request text explicitly states it; everything else is left `None`. It
+  is explicitly instructed never to calculate a value — most importantly,
+  never to derive a duration (`chargeable_period_days`, `days_in_sa_waters`)
+  from two dates it was given. If the text doesn't state a duration in
+  those terms, the field stays `None`, exactly as if a human had left it
+  blank.
+- **Evidence per field.** For every field it populates, the model must
+  also return the short, verbatim fragment of the request text that value
+  came from (`ParsedVesselCall.trace`, one `ExtractionTraceEntry` per
+  populated field). This is the check that a value was *read*, not
+  invented — a field with a plausible value but no matching text in the
+  evidence would be an obvious tell that something went wrong.
+- **Validation is a hard error.** `parse_vessel_request()` converts the
+  draft extraction into a real `VesselCall` and lets Pydantic validate it
+  in full — including the constraints added to `VesselCall` itself for
+  this purpose (`gross_tonnage > 0`, `port` a real enum member,
+  `number_of_operations >= 0`, and all duration fields `>= 0`). A failure
+  raises `pydantic.ValidationError`. It is never caught and downgraded to
+  `None`, because a silently-dropped bad field would resolve to the
+  engine's unmodified base case (§6) — indistinguishable from a field
+  that was simply never mentioned. That would hide a parsing failure
+  behind normal, unremarkable output.
+- **The schema is generated from `VesselCall`, not hand-duplicated.**
+  `tariffs.nlp._build_extraction_schema()` builds the LLM's structured-
+  output target by walking `VesselCall.model_fields`, so it can't drift
+  out of sync with the real model, and every field's Pydantic
+  `description` (added to `VesselCall` for exactly this purpose) doubles
+  as the guidance the LLM sees in its tool-call schema.
+
+### Why an LLM for parsing, not for calculation
+
+Extraction is language work — reading a free-text request and identifying
+which of ~25 possible facts it states, in whatever phrasing someone
+happened to use. That's what LLMs are for. Calculation is deterministic —
+the same GT and the same band always produce the same fee, and that has
+to be exactly, auditably true every time, not "usually right." Keeping
+these separate also gives the right failure mode for each: a fact absent
+from the request should come back *absent* (`None`, resolving to the
+engine's documented base case) rather than *guessed* — and an LLM asked
+to also calculate could plausibly "helpfully" fill in a number that looks
+right but isn't traceable to a formula. Nothing in this layer computes a
+tariff; it only ever decides what a `VesselCall` field should be set to.
+
+### Why LangGraph was not used in v2 (and what would justify it in v3)
+
+A graph earns its complexity when there's branching, a loop, or state
+that persists across steps. v2 is one call in, one call out: text goes
+in, a structured extraction comes back, it's validated, done. Wrapping
+that in a LangGraph node would add a runnable-graph abstraction, a state
+schema, and an execution engine for a single edge with no branches — pure
+ceremony over a plain function call.
+
+`parse_vessel_request()` is deliberately written as a stateless, pure
+function for exactly this reason: it can become a graph node later
+without changing its contract. What would actually justify introducing
+LangGraph, in v3:
+
+- **Interactive resolution of unknown fields.** Today, an unresolved
+  field just stays `None` and the engine falls back to its base case
+  (§6). An interactive version — "the text didn't say whether cargo
+  working is happening; ask the user" — needs a loop with state
+  (which fields are still open, what's already been asked) that a graph
+  models naturally and a single function does not.
+- **External enrichment.** Looking up a vessel's registered port, hull
+  certification, or bona fide coaster status from AIS data or a
+  registry (§9) is a second step with its own failure modes, plausibly
+  running conditionally on what parsing left unresolved — again, a
+  multi-step, conditional flow a graph is the right tool for, that one
+  function call is not.
+
+### The two timestamp decisions, stated plainly
+
+Both of these were already true in v1; restated here together because
+v2's free-text input makes it easy to supply timestamps without also
+supplying the figures they're being used as stand-ins for.
+
+1. **Out-of-hours surcharge** (towage/pilotage/berthing, §9.3, §7.5, §3.8):
+   `arrival`/`departure` are used as **proxies** for the inbound/outbound
+   *service* time the surcharge actually triggers on — not the same
+   instant. This is recorded in the trace as **derived-by-proxy, not
+   asserted** (`tariffs/modifiers.py`, `is_out_of_hours()`). In
+   particular, the vessel may have waited at anchorage before berthing,
+   so the arrival timestamp only approximates when the inbound service
+   occurred — it can't be later than the true service time, only earlier
+   or equal.
+2. **Port dues chargeable period** (§7.2): **days alongside** is used as
+   the chargeable period — the answer key was computed this way, and it
+   reconciles exactly (§2, §4). The book's own rule is
+   **entrance-to-entrance** timing, which `chargeable_period_basis` on
+   `VesselCall` already models as a first-class alternative
+   (`PeriodBasis.ENTRANCE_TO_ENTRANCE`) — it is not a config toggle that
+   changes the formula, it is a different *value* for
+   `chargeable_period_days`, supplied instead of the alongside-time proxy
+   whenever real entrance timestamps are available. Both figures for the
+   reference case are shown side by side in §7.2 of `SPEC.md` and §4
+   above: entrance-to-entrance-style arrival-to-departure gives 7.117
+   days (→ 309,853, far off); days alongside gives 3.396 days (→
+   199,549.22, exact). The gap between them is transit time inside the
+   entrance plus anchorage wait — genuine chargeable time the
+   alongside-time proxy omits.
 
 ---
 

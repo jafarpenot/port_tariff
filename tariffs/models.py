@@ -86,39 +86,64 @@ class PeriodBasis(str, Enum):
 
 class VesselCall(BaseModel):
     # identity and dimensions
-    vessel_name: Optional[str] = None
-    port: Port
-    gross_tonnage: float
-    length_overall_m: Optional[float] = None
-    vessel_type: Optional[VesselType] = None
+    vessel_name: Optional[str] = Field(default=None, description="The vessel's name, if stated (e.g. 'SUDESTADA').")
+    port: Port = Field(description="The South African port of call — one of the eight ports Transnet operates.")
+    gross_tonnage: float = Field(
+        gt=0, description="Gross tonnage (GT): a dimensionless measure of enclosed volume, not a weight."
+    )
+    length_overall_m: Optional[float] = Field(default=None, description="Length overall (LOA) of the vessel, in metres.")
+    vessel_type: Optional[VesselType] = Field(default=None, description="The vessel's type/class, e.g. bulk carrier, tanker, container, passenger.")
 
     # timing
-    arrival: Optional[datetime] = None
-    departure: Optional[datetime] = None
-    chargeable_period_days: Optional[float] = None
-    chargeable_period_basis: Optional[PeriodBasis] = None
+    arrival: Optional[datetime] = Field(default=None, description="The vessel's arrival timestamp at the port.")
+    departure: Optional[datetime] = Field(default=None, description="The vessel's departure timestamp from the port.")
+    chargeable_period_days: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "The port dues chargeable period, in days, ONLY if the text states this "
+            "duration directly (e.g. 'alongside for 3.4 days'). Never compute this "
+            "from arrival/departure timestamps — leave null if no duration is stated."
+        ),
+    )
+    chargeable_period_basis: Optional[PeriodBasis] = Field(
+        default=None,
+        description="Only set if the text explicitly says the chargeable period is entrance-to-entrance or days-alongside.",
+    )
 
     # services
-    number_of_operations: Optional[int] = None
-    marine_service_count: Optional[int] = None  # derived; see resolved_marine_service_count()
+    number_of_operations: Optional[int] = Field(
+        default=None, ge=0, description="Number of marine operations/movements stated for this call (e.g. 'Number of Operations: 2')."
+    )
+    marine_service_count: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Only set if the number of marine SERVICES is stated directly and distinctly from 'number of operations'.",
+    )  # derived; see resolved_marine_service_count()
 
     # tri-state modifier flags — None means "not stated"
-    engaged_in_cargo_working: Optional[bool] = None
-    is_bona_fide_coaster: Optional[bool] = None
-    is_passenger_vessel: Optional[bool] = None
-    is_first_sa_port_call: Optional[bool] = None
-    days_in_sa_waters: Optional[float] = None
-    call_purpose_bunkers_stores_water_only: Optional[bool] = None
-    hull_certification: list[HullCert] = Field(default_factory=list)
-    exemption_status: Optional[ExemptionStatus] = None
-    self_propelled: Optional[bool] = None
+    engaged_in_cargo_working: Optional[bool] = Field(default=None, description="Whether the vessel is engaged in cargo working, ONLY if explicitly stated either way.")
+    is_bona_fide_coaster: Optional[bool] = Field(default=None, description="Whether the vessel holds bona fide coaster status, ONLY if explicitly stated.")
+    is_passenger_vessel: Optional[bool] = Field(default=None, description="Whether this is a passenger vessel, ONLY if explicitly stated (not inferred from vessel_type).")
+    is_first_sa_port_call: Optional[bool] = Field(default=None, description="Whether this is the vessel's first South African port call on this voyage, ONLY if explicitly stated.")
+    days_in_sa_waters: Optional[float] = Field(
+        default=None, ge=0, description="Days the vessel has spent in South African waters, ONLY if stated as a figure directly."
+    )
+    call_purpose_bunkers_stores_water_only: Optional[bool] = Field(
+        default=None, description="Whether the call's sole purpose is taking on bunkers/stores/water, ONLY if explicitly stated."
+    )
+    hull_certification: list[HullCert] = Field(
+        default_factory=list, description="Double hull / segregated ballast / Green Award certifications, ONLY if explicitly stated for this vessel."
+    )
+    exemption_status: Optional[ExemptionStatus] = Field(default=None, description="SAPS, SANDF, SAMSA, or SA medical/research exemption status, ONLY if explicitly stated.")
+    self_propelled: Optional[bool] = Field(default=None, description="Whether the vessel is self-propelled, ONLY if explicitly stated.")
 
     # event flags — not derivable from a vessel sheet
-    mooring_boat_used: Optional[bool] = None  # §3.9, v1: warn only
-    additional_tug_requested: Optional[bool] = None
-    vessel_without_own_power: Optional[bool] = None
-    service_cancelled_after_standby: Optional[bool] = None
-    late_against_notified_time: Optional[bool] = None
+    mooring_boat_used: Optional[bool] = Field(default=None, description="Whether a launch/mooring boat was used to run the vessel's lines, ONLY if explicitly stated.")  # §3.9, v1: warn only
+    additional_tug_requested: Optional[bool] = Field(default=None, description="Whether a tug beyond the standard allocation was requested, ONLY if explicitly stated.")
+    vessel_without_own_power: Optional[bool] = Field(default=None, description="Whether the vessel was serviced without her own power, ONLY if explicitly stated.")
+    service_cancelled_after_standby: Optional[bool] = Field(default=None, description="Whether a requested service was cancelled after standby had commenced, ONLY if explicitly stated.")
+    late_against_notified_time: Optional[bool] = Field(default=None, description="Whether the vessel arrived/departed 30+ minutes after the notified time, ONLY if explicitly stated.")
 
     def resolved_marine_service_count(self) -> tuple[Optional[int], str]:
         """Three-tier resolution (SPEC.md §8.2): stated > derived > unresolved.

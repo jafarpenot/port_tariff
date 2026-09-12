@@ -78,10 +78,20 @@ def _parse_hhmm(value: str) -> time:
 
 
 def is_out_of_hours(ts: Optional[datetime], port: Port, schedule: TariffSchedule) -> Optional[bool]:
-    """Derived, never stated (SPEC.md §8.3). `None` if `ts` is missing.
+    """Derived-by-proxy, never asserted (SPEC.md §8.3). `None` if `ts` is
+    missing.
 
-    Public holidays are not modelled — no calendar exists in v1 — so this
-    can be wrong specifically on a public holiday; otherwise exact.
+    `ts` (the vessel's arrival or departure timestamp) is used as a proxy
+    for the inbound/outbound *service* time the book's surcharge actually
+    triggers on — the two are not the same instant. The vessel may have
+    waited at anchorage before berthing, so in particular the arrival
+    timestamp is only an approximation of when the inbound service
+    (pilotage/towage/berthing) actually occurred; it can be earlier than
+    the true service time by however long the vessel sat at anchor.
+
+    Public holidays are also not modelled — no calendar exists in v1 — so
+    this can be wrong specifically on a public holiday; otherwise exact
+    for the timestamp it was given.
     """
     if ts is None:
         return None
@@ -96,8 +106,9 @@ def is_out_of_hours(ts: Optional[datetime], port: Port, schedule: TariffSchedule
 
 def _call_out_of_hours(call: VesselCall, schedule: TariffSchedule) -> Optional[bool]:
     """Whether either endpoint of the call (arrival or departure) fell
-    outside ordinary working hours — a per-call proxy for the book's
-    per-service trigger (see module docstring)."""
+    outside ordinary working hours — a per-call, derived-by-proxy stand-in
+    for the book's per-service trigger (see is_out_of_hours docstring and
+    the module docstring)."""
     flags = [
         is_out_of_hours(call.arrival, call.port, schedule),
         is_out_of_hours(call.departure, call.port, schedule),
@@ -106,6 +117,25 @@ def _call_out_of_hours(call: VesselCall, schedule: TariffSchedule) -> Optional[b
     if not resolved:
         return None
     return any(resolved)
+
+
+def _out_of_hours_or_readiness_reason(
+    overall: Optional[bool], out_of_hours: Optional[bool], flag_b: Optional[bool], flag_c: Optional[bool]
+) -> str:
+    """Shared reason text for pilotage/berthing's single OR'd surcharge,
+    naming which leg actually fired — and, when it was the out-of-hours
+    leg, marking it derived-by-proxy rather than asserted (see
+    is_out_of_hours docstring)."""
+    if overall is not True:
+        return "no triggering condition stated"
+    if out_of_hours is True:
+        return (
+            "derived-by-proxy from arrival/departure timestamp (not asserted — vessel may have "
+            "waited at anchorage, so arrival approximates rather than confirms the inbound service time)"
+        )
+    if flag_b is True or flag_c is True:
+        return "readiness/lateness or cancellation condition stated true"
+    return "triggering condition met"  # pragma: no cover - defensive; overall is True implies one leg is True
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +356,12 @@ def resolve_towage_surcharges(call: VesselCall, schedule: TariffSchedule) -> dic
             "towage_out_of_hours_25pct",
             out_of_hours,
             rate=cfg.out_of_hours.rate,
-            reason="arrival/departure fell outside ordinary working hours" if out_of_hours else "within ordinary working hours / timestamps not stated",
+            reason=(
+                "derived-by-proxy from arrival/departure timestamp (not asserted — vessel may have "
+                "waited at anchorage, so arrival approximates rather than confirms the inbound service time)"
+                if out_of_hours
+                else "within ordinary working hours per arrival/departure timestamp, or timestamps not stated"
+            ),
         ),
         "additional_tug_50pct": ModifierOutcome(
             "towage_additional_tug_beyond_allocation_50pct",
@@ -400,7 +435,7 @@ def resolve_pilotage_surcharge(call: VesselCall, schedule: TariffSchedule) -> Mo
         "pilotage_surcharge_50pct",
         flag,
         rate=cfg.standard_50pct.rate,
-        reason="out-of-hours, readiness, or cancellation condition met" if flag else "no triggering condition stated",
+        reason=_out_of_hours_or_readiness_reason(flag, out_of_hours, call.late_against_notified_time, call.service_cancelled_after_standby),
     )
 
 
@@ -438,7 +473,7 @@ def resolve_berthing_surcharge(call: VesselCall, schedule: TariffSchedule) -> Mo
         "berthing_surcharge_50pct",
         flag,
         rate=cfg.standard_50pct.rate,
-        reason="out-of-hours, cancellation, or late-arrival condition met" if flag else "no triggering condition stated",
+        reason=_out_of_hours_or_readiness_reason(flag, out_of_hours, call.service_cancelled_after_standby, call.late_against_notified_time),
     )
 
 
