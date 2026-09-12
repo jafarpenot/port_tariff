@@ -420,6 +420,49 @@ running_of_vessel_lines:
   saldanha_remooring_without_tug_or_pilot_per_service: 4739.14
 
 # ---------------------------------------------------------------------------
+# 8.3 Ordinary working hours — §3.1, page 12
+# A weekly schedule per port. Days not listed mean zero ordinary hours
+# that day (so the out-of-hours surcharge can fire all day on an unlisted
+# day, e.g. Sunday at East London). Public holidays are NOT modelled here
+# (SPEC.md §8.3) — there is no calendar to classify them.
+# ---------------------------------------------------------------------------
+ordinary_working_hours:
+  source: {section: "3.1", page: 12}
+  note: >
+    The six 24-hour ports can never be "outside ordinary working hours"
+    via this table alone. The book hints a public holiday might sit
+    outside ordinary hours even at a 24-hour port ("available on special
+    request on public holidays"), but does not say so explicitly, and no
+    holiday calendar is implemented in v1 — this is a documented gap, not
+    an oversight.
+  ports:
+    richards_bay:    {is_24_hour: true}
+    durban:          {is_24_hour: true}
+    ngqura:          {is_24_hour: true}
+    port_elizabeth:  {is_24_hour: true}
+    cape_town:       {is_24_hour: true}
+    saldanha:        {is_24_hour: true}
+    mossel_bay:
+      is_24_hour: false
+      hours:
+        mon: {start: "06:00", end: "18:00"}
+        tue: {start: "06:00", end: "18:00"}
+        wed: {start: "06:00", end: "18:00"}
+        thu: {start: "06:00", end: "18:00"}
+        fri: {start: "06:00", end: "18:00"}
+        # sat/sun not listed — zero ordinary hours.
+    east_london:
+      is_24_hour: false
+      hours:
+        mon: {start: "06:00", end: "22:00"}
+        tue: {start: "06:00", end: "22:00"}
+        wed: {start: "06:00", end: "22:00"}
+        thu: {start: "06:00", end: "22:00"}
+        fri: {start: "06:00", end: "22:00"}
+        sat: {start: "06:00", end: "12:00"}
+        # sun not listed — zero ordinary hours, surcharge fires all day.
+
+# ---------------------------------------------------------------------------
 # 9.4 Marine services incentive — §3.2, page 12
 # Volume discount per shipping line, based on national call counts. The
 # VesselCall model carries no shipping-line identity or call-count field, so

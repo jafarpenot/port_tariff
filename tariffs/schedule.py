@@ -294,6 +294,27 @@ class RunningOfVesselLines(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# 8.3 Ordinary working hours
+# ---------------------------------------------------------------------------
+
+
+class DayHours(BaseModel):
+    start: str  # "HH:MM"
+    end: str  # "HH:MM"
+
+
+class PortWorkingHours(BaseModel):
+    is_24_hour: bool
+    hours: dict[str, DayHours] = {}  # keys: mon/tue/.../sun; missing day = zero hours
+
+
+class OrdinaryWorkingHours(BaseModel):
+    source: Source
+    note: str
+    ports: dict[str, PortWorkingHours]
+
+
+# ---------------------------------------------------------------------------
 # 9.4 Marine services incentive
 # ---------------------------------------------------------------------------
 
@@ -326,6 +347,7 @@ class TariffSchedule(BaseModel):
     pilotage: Pilotage
     berthing_services: BerthingServices
     running_of_vessel_lines: RunningOfVesselLines
+    ordinary_working_hours: OrdinaryWorkingHours
     marine_services_incentive: MarineServicesIncentive
 
 

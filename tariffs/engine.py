@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import calculators as calc
+from . import modifiers as mod
 from .models import CalculationResult, VesselCall
 from .schedule import DEFAULT_SCHEDULE_PATH, TariffSchedule, load_schedule
 
@@ -41,11 +42,13 @@ def calculate(
     sched = _get_schedule(schedule, schedule_path)
     return CalculationResult(
         vessel_call=call,
-        light_dues=calc.light_dues(call, sched),
-        port_dues=calc.port_dues(call, sched),
-        towage_dues=calc.towage_dues(call, sched),
-        vts_dues=calc.vts_dues(call, sched),
-        pilotage_dues=calc.pilotage_dues(call, sched),
-        berthing_services=calc.berthing_services(call, sched),
+        light_dues=mod.apply_to_light_dues(calc.light_dues(call, sched), call, sched),
+        port_dues=mod.apply_to_port_dues(calc.port_dues(call, sched), call, sched),
+        towage_dues=mod.apply_to_towage(calc.towage_dues(call, sched), call, sched),
+        vts_dues=mod.apply_to_vts(calc.vts_dues(call, sched), call, sched),
+        pilotage_dues=mod.apply_to_pilotage(calc.pilotage_dues(call, sched), call, sched),
+        berthing_services=mod.apply_to_berthing(calc.berthing_services(call, sched), call, sched),
+        # §3.9: parsed, not calculated — no modifiers apply to an
+        # amount that is never computed in v1.
         running_of_vessel_lines=calc.running_of_vessel_lines(call, sched),
     )
