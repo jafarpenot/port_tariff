@@ -406,8 +406,15 @@ def resolve_pilotage_surcharge(call: VesselCall, schedule: TariffSchedule) -> Mo
 
 def apply_to_pilotage(result: TariffResult, call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.pilotage
+    trace = list(result.trace)
+
+    exemption = resolve_exemption(call, cfg.exemptions)
+    trace.append(_trace_step(cfg.source, "Pilotage dues", exemption))
+    if exemption.applied is True:
+        return result.model_copy(update={"amount": 0.0, "trace": trace})
+
     outcome = resolve_pilotage_surcharge(call, schedule)
-    trace = [*result.trace, _trace_step(cfg.source, "Pilotage dues", outcome)]
+    trace.append(_trace_step(cfg.source, "Pilotage dues", outcome))
 
     incentive = _marine_incentive_outcome()
     trace.append(_trace_step(schedule.marine_services_incentive.source, "Pilotage dues", incentive))

@@ -326,8 +326,15 @@ pilotage:
     rate_per_hour: 886.20
     applicability: "Saldanha and tankers only, pilot remaining aboard during the stay."
 
+  # SAPS/SANDF are exempt UNLESS they themselves request pilotage — an
+  # inverted exemption (normally exempt, forfeited only on request), the
+  # opposite shape of every other exemption in this book. VesselCall has
+  # no "pilotage_requested" flag, so that carve-out cannot be evaluated;
+  # this is applied as a plain exemption like the others, and the gap is
+  # documented in the README rather than silently modelled as if resolved.
   exemptions:
-    - "saps_and_sandf_unless_pilotage_requested"
+    - saps
+    - sandf
 
 # ---------------------------------------------------------------------------
 # 7.6 Berthing services — §3.8, page 18
