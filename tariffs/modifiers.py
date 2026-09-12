@@ -67,6 +67,21 @@ def _and3(*vals: Optional[bool]) -> Optional[bool]:
 
 
 def _stay_hours(call: VesselCall) -> Optional[float]:
+    """The vessel's actual physical time in port (arrival to departure) —
+    deliberately NOT `call.chargeable_period_days`, which is the port
+    dues *billing* figure and, per SPEC.md §7.2, is often itself a proxy
+    (e.g. days alongside) that can differ from total time in port.
+
+    The reduction/surcharge conditions that reference "stay" — the 60%
+    bunkers-only reduction's "entire stay does not exceed 48 hours", the
+    15% reduction's "remaining in port for less than 12 hours", the 35%
+    reduction's "first 30 days", and the 20% long-stay surcharge's "in
+    port longer than 30 days" — all read as the vessel's actual presence
+    in the book, not the chargeable period used to bill port dues. So
+    changing only `chargeable_period_days` on a VesselCall does not, by
+    itself, change whether any of these fire; `arrival`/`departure` is
+    what drives them.
+    """
     if call.arrival is None or call.departure is None:
         return None
     return (call.departure - call.arrival).total_seconds() / 3600

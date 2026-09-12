@@ -249,6 +249,24 @@ supplied input under-specifies a formula input.
   at a 24-hour port, but no calendar exists in v1 to test a date against.
   The out-of-hours derivation is exact for ordinary weekdays and
   Saturdays, and can be wrong specifically on a public holiday.
+- **"Stay," for reduction/surcharge eligibility, means actual time in
+  port — not `chargeable_period_days`.** The book's own wording for the
+  60% reduction ("entire stay does not exceed 48 hours"), the 15%
+  reduction ("remaining in port for less than 12 hours"), the 35%
+  reduction's "first 30 days," and the 20% long-stay surcharge's "longer
+  than 30 days" all describe the vessel's actual physical presence —
+  arrival to departure — which is a different figure from
+  `chargeable_period_days`, the port dues *billing* figure that (per
+  §7.2) is itself often a proxy such as days alongside. This
+  implementation computes "stay" from `arrival`/`departure` for all four
+  conditions, deliberately independent of whatever `chargeable_period_days`
+  is set to. A practical consequence, caught while manually testing this
+  build: setting `call_purpose_bunkers_stores_water_only=True` and only
+  changing `chargeable_period_days` to something under 48 hours will
+  **not** trigger the 60% reduction if `arrival`/`departure` still imply
+  a longer stay — that's correct behaviour, not a bug, but it can look
+  like one if you assume "stay" and "chargeable period" are the same
+  number.
 
 ---
 
