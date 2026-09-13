@@ -19,10 +19,13 @@ docker compose run --rm app pytest
 
 **Option B — local**
 ```bash
+python -m venv .venv && source .venv/bin/activate   # keep this out of your global environment
 pip install -e .
 python -m tariffs.cli "your request here"
 # Optional: pytest   (verifies the six reference values against the answer key)
 ```
+(Already using `uv`? `uv sync && uv run python -m tariffs.cli "..."` does the
+same thing, in the project's existing `.venv`.)
 
 `ANTHROPIC_API_KEY` is the only environment variable required, read at
 runtime — it is never baked into the Docker image or committed to this
