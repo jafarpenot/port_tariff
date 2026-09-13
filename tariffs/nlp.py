@@ -116,7 +116,10 @@ class ParsedVesselCall(BaseModel):
 def _default_llm(model: str) -> Any:
     from langchain_anthropic import ChatAnthropic
 
-    return ChatAnthropic(model=model, temperature=0)
+    # No `temperature` argument: newer Claude models (e.g. claude-sonnet-5)
+    # reject it outright ("temperature is deprecated for this model")
+    # rather than ignoring it, so passing 0 here fails every real call.
+    return ChatAnthropic(model=model)
 
 
 def parse_vessel_request(
