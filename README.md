@@ -560,6 +560,25 @@ supplying the figures they're being used as stand-ins for.
 
 ---
 
+## 12. Follow-up / known issues
+
+- **`calculate()` silently assumes 1 service when the count is missing —
+  inconsistent with the v2 parser, not yet fixed.** `calculators.py`'s
+  `_resolved_services()` defaults an unresolved marine service count to
+  1 for pilotage/towage/berthing (the §8.2 base-case decision from v1).
+  `parse_vessel_request()` (§11) never does this — it reports those
+  three as not computable instead. This means `calculate()` and
+  `Parsed.tariffs` can disagree if `calculate()` is ever called directly
+  on an incomplete `VesselCall`: `port_dues` raises loudly if the
+  chargeable period is missing, but pilotage/towage/berthing **do not
+  raise** on a missing operation count — they return a plausible-looking,
+  wrong number instead. Until this is fixed, don't call `calculate()` on
+  a `VesselCall` that didn't come from a fully-`Parsed` result; use
+  `Parsed.tariffs[name].result` (which already carries the full trace)
+  instead of recomputing via `calculate()`.
+
+---
+
 ## Notebook
 
 `notebooks/exploration.ipynb` is optional and not part of the graded
