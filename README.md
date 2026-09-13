@@ -62,7 +62,7 @@ tariffs/
     engine.py        # the single entry point, calculate()
     adapter.py       # assignment output mapping
     nlp.py           # v2: parse_vessel_request() — free text -> validated VesselCall (§11)
-tests/               # five v1 layers (§6) + tests/test_nlp_parser.py for v2
+tests/               # five v1 layers (SPEC.md §10) + test_nlp_parser.py for v2 — 112 tests total
 notebooks/exploration.ipynb   # optional; a consumer of the package, not part of the graded path
 ```
 
