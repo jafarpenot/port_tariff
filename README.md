@@ -1,10 +1,42 @@
 # Port Tariff Calculator
 
 Calculates six Transnet National Ports Authority marine tariffs from a
-structured vessel call, against the 23rd Edition (1 April 2024 – 31 March
-2025) tariff book. Built to a fixed specification (`SPEC.md`); this README
-explains what was built, where the book was ambiguous, and what was
-deliberately left out of v1.
+free-text vessel-call request (or a structured `VesselCall`), against the
+23rd Edition (1 April 2024 – 31 March 2025) tariff book.
+
+## Run it
+
+**Option A — Docker (recommended)**
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or put it in a local .env file
+docker compose up
+# open http://localhost:8501
+```
+Run the test suite in the same image instead of the app:
+```bash
+docker compose run --rm app pytest
+```
+
+**Option B — local**
+```bash
+pip install -e .
+python -m tariffs.cli "your request here"
+# Optional: pytest   (verifies the six reference values against the answer key)
+```
+
+`ANTHROPIC_API_KEY` is the only environment variable required, read at
+runtime — it is never baked into the Docker image or committed to this
+repo (see `.gitignore`).
+
+Everything below this point documents *what was built and why*, in the
+order it was built (v1, then v2, then v3) — the run instructions above
+are everything you need to just use it.
+
+---
+
+Built to a fixed specification (`SPEC.md`); this README explains what
+was built, where the book was ambiguous, and what was deliberately left
+out at each stage.
 
 All figures in this document and produced by this package are **ex-VAT**
 (VAT of 15% is noted on every page of the source book and is never applied
@@ -62,8 +94,12 @@ tariffs/
     engine.py        # the single entry point, calculate()
     adapter.py       # assignment output mapping
     nlp.py           # v2: parse_vessel_request() — free text -> validated VesselCall (§11)
-tests/               # five v1 layers (SPEC.md §10) + test_nlp_parser.py for v2 — 112 tests total
+    cli.py           # v3: python -m tariffs.cli (§13)
+tests/               # five v1 layers (SPEC.md §10) + nlp/cli tests for v2/v3
 notebooks/exploration.ipynb   # optional; a consumer of the package, not part of the graded path
+app.py               # v3: streamlit run app.py (§13)
+examples/sudestada.json   # sample VesselCall for `tariffs.cli --json` (no API key needed)
+Dockerfile, docker-compose.yml   # v3: docker compose up (§13)
 ```
 
 **Principle followed throughout:** anything that varies by port, band, or
@@ -576,6 +612,59 @@ supplying the figures they're being used as stand-ins for.
   a `VesselCall` that didn't come from a fully-`Parsed` result; use
   `Parsed.tariffs[name].result` (which already carries the full trace)
   instead of recomputing via `calculate()`.
+
+---
+
+## 13. v3: packaging and delivery
+
+Wrapping only — `tariffs/cli.py`, `app.py`, `Dockerfile`,
+`docker-compose.yml`. The engine, the calculators, the modifiers, and the
+parsing layer are untouched; nothing in this section contains
+calculation or business logic.
+
+### Two entry points, one shared rule
+
+Both `tariffs/cli.py` (`python -m tariffs.cli`) and `app.py`
+(`streamlit run app.py`) go through `tariffs.nlp.parse_vessel_request()`
+and render whichever `ParseResult` comes back — `Parsed` (with its
+per-tariff computability) or `Rejected`. **Neither calls
+`tariffs.engine.calculate()` in its normal path.** Both show the same
+four blocks in the same order: parsed vessel call + evidence, tariff
+values (never a zero for one that's not computable), the trace, then
+warnings. The Streamlit app shows the vessel call and evidence *before*
+the results, as specified.
+
+The one deliberate exception: the CLI's `--json <file>` flag loads a
+hand-built `VesselCall` from JSON and runs it through `calculate()`
+directly, bypassing the parser entirely — specifically so the CLI is
+exercisable with no API key and no LLM call (`examples/sudestada.json`
+ships as a ready-made example, reproducing the six reference values
+exactly). This is the only place in v3 that calls `calculate()`, and it
+never receives parser output — see §12 for why that pairing (parser
+output + a direct `calculate()` call) is specifically the one to avoid.
+
+Both entry points catch exceptions from a broken program (unreachable
+API, a validation error on a field the model did populate) at the top
+level only, printing/showing a clean message — never a raw traceback,
+and never conflated with a `Rejected` result's calm, structural reason.
+
+### Packaging
+
+- **Plain `pip install -e .` is sufficient** — `langchain-anthropic` and
+  `streamlit` moved from uv-only dependency groups into core
+  `[project.dependencies]`, alongside `pydantic`, `pyyaml`, and `pytest`
+  (all four are now plain pip-installable, matching this section's own
+  install instructions). Only notebook exploration (`pandas`, `jupyter`,
+  `ipykernel`) remains a separate, optional group — genuinely optional,
+  since notebooks aren't part of the delivery path.
+- **`Dockerfile`** installs the project with plain `pip` (no `uv` inside
+  the image) and runs the Streamlit app by default.
+  **`docker-compose.yml`** passes `ANTHROPIC_API_KEY` through from the
+  host environment (or a local `.env`, which Docker Compose reads
+  automatically) — the key is never baked into the image or committed.
+  The same image runs the test suite via
+  `docker compose run --rm app pytest`, with no separate Dockerfile or
+  service needed for it.
 
 ---
 

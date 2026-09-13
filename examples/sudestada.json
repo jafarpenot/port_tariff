@@ -1,0 +1,12 @@
+{
+  "vessel_name": "SUDESTADA",
+  "port": "durban",
+  "gross_tonnage": 51255,
+  "length_overall_m": 229.2,
+  "vessel_type": "bulk_carrier",
+  "arrival": "2024-11-15T10:12:00",
+  "departure": "2024-11-22T13:00:00",
+  "chargeable_period_days": 3.396,
+  "chargeable_period_basis": "days_alongside_proxy",
+  "number_of_operations": 2
+}

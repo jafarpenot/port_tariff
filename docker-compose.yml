@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # Read from the host shell or a local .env file (docker compose
+      # loads .env automatically) — never baked into the image.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+# Run the test suite in this same image, instead of the Streamlit app:
+#   docker compose run --rm app pytest

@@ -5,23 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "port-tariff"
 version = "0.1.0"
-description = "Port Tariff Calculator (Transnet NPA, 23rd Edition, 2024/2025) — v1 engine"
+description = "Port Tariff Calculator (Transnet NPA, 23rd Edition, 2024/2025)"
 requires-python = ">=3.11"
 dependencies = [
+    # Core engine (SPEC.md v1 §4): pydantic, pyyaml, pytest — nothing else.
     "pydantic>=2,<3",
     "pyyaml>=6",
+    "pytest>=7",
+    # v2 parsing layer + v3 delivery: needed for `python -m tariffs.cli`
+    # and `streamlit run app.py` to run at all, so they're core, not
+    # optional — a plain `pip install -e .` must be enough for both.
+    "langchain-anthropic>=0.3",
+    "streamlit>=1.35",
 ]
 
 [dependency-groups]
-dev = ["pytest>=7"]
+# Notebook exploration only — optional, not part of the graded/delivery
+# path. Opt in with `uv sync --group notebook`.
 notebook = ["pandas>=2", "jupyter>=1", "ipykernel>=6"]
-# v2 only: the natural-language parsing layer (tariffs/nlp.py). Kept out
-# of default-groups since it pulls in the Anthropic SDK and needs
-# ANTHROPIC_API_KEY at runtime — opt in with `uv sync --group nlp`.
-nlp = ["langchain-anthropic>=0.3"]
 
 [tool.uv]
-default-groups = ["dev", "notebook"]
+default-groups = ["notebook"]
 
 [tool.setuptools.packages.find]
 include = ["tariffs*"]
