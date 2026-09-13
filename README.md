@@ -21,9 +21,8 @@ docker compose run --rm app pytest
 ```bash
 python -m venv .venv && source .venv/bin/activate   # keep this out of your global environment
 pip install -e .
-export ANTHROPIC_API_KEY=sk-ant-...                   # not needed for --json below
+export ANTHROPIC_API_KEY=sk-ant-...
 python -m tariffs.cli "your request here"
-python -m tariffs.cli --json examples/sudestada.json  # no API key — bypasses the LLM
 # Optional: pytest   (verifies the six reference values against the answer key)
 ```
 (Already using `uv`? `uv sync && uv run --env-file .env python -m tariffs.cli "..."`.)
@@ -64,10 +63,9 @@ else:
 Takes a complete, trusted `VesselCall` and computes all six tariffs,
 crashing loudly if a required field is missing — no "not computable"
 concept. Used directly by `Parsed.tariffs` internally, by the test suite,
-by the notebook, and by the CLI's `--json` mode (bypasses the parser
-entirely, so the CLI is testable with no API key). **Never call it on a
-`VesselCall` that came from an incomplete `Parsed` result** — §9 explains
-why that specific combination can silently give a wrong number.
+and by the notebook. **Never call it on a `VesselCall` that came from an
+incomplete `Parsed` result** — §9 explains why that specific combination
+can silently give a wrong number.
 
 ### Repository layout
 
@@ -81,7 +79,6 @@ tariffs/
 app.py           # v3 — streamlit run app.py
 tests/           # v1's five layers (SPEC.md §10) + nlp/cli tests
 notebooks/exploration.ipynb   # optional, not part of the graded path
-examples/sudestada.json       # sample VesselCall for --json
 Dockerfile, docker-compose.yml
 ```
 
@@ -434,10 +431,7 @@ Both `python -m tariffs.cli` and `streamlit run app.py` go through
 `parse_vessel_request()` and render whichever result comes back — the
 same four blocks, same order: vessel call + evidence, tariff values
 (never zero for one that's not computable), trace, warnings. Neither
-calls `calculate()` in its normal path. The one exception: the CLI's
-`--json <file>` loads a hand-built `VesselCall` and calls `calculate()`
-directly, bypassing the parser so the CLI is exercisable with no API key
-(`examples/sudestada.json` reproduces the reference case exactly).
+calls `calculate()` directly.
 
 Both entry points catch broken-program exceptions at the top level only,
 printing/showing one clean message — never a raw traceback, never
