@@ -1,8 +1,8 @@
 # Port Tariff Calculator
 
 Calculates six Transnet National Ports Authority marine tariffs from a
-free-text vessel-call request (or a structured `VesselCall`), against the
-23rd Edition (1 April 2024 – 31 March 2025) tariff book.
+free-text vessel-call request, against the 23rd Edition (1 April 2024 –
+31 March 2025) tariff book.
 
 ## Run it
 
@@ -21,95 +21,73 @@ docker compose run --rm app pytest
 ```bash
 python -m venv .venv && source .venv/bin/activate   # keep this out of your global environment
 pip install -e .
+export ANTHROPIC_API_KEY=sk-ant-...                   # not needed for --json below
 python -m tariffs.cli "your request here"
+python -m tariffs.cli --json examples/sudestada.json  # no API key — bypasses the LLM
 # Optional: pytest   (verifies the six reference values against the answer key)
 ```
-(Already using `uv`? `uv sync && uv run python -m tariffs.cli "..."` does the
-same thing, in the project's existing `.venv`.)
+(Already using `uv`? `uv sync && uv run --env-file .env python -m tariffs.cli "..."`.)
 
 `ANTHROPIC_API_KEY` is the only environment variable required, read at
-runtime — it is never baked into the Docker image or committed to this
-repo (see `.gitignore`).
-
-Everything below this point documents *what was built and why*, in the
-order it was built (v1, then v2, then v3) — the run instructions above
-are everything you need to just use it.
+runtime — never baked into the Docker image or committed (see `.gitignore`).
 
 ---
 
 Built to a fixed specification (`SPEC.md`); this README explains what
 was built, where the book was ambiguous, and what was deliberately left
-out at each stage.
-
-All figures in this document and produced by this package are **ex-VAT**
-(VAT of 15% is noted on every page of the source book and is never applied
-here).
+out. All figures here, and everything this package produces, are
+**ex-VAT** — VAT of 15% is noted on every page of the source book and is
+never applied by this system.
 
 ---
 
-## 1. What it does, and how to run it
+## 1. What it does
 
-A Python package with **one entry point**:
+Two functions, two different jobs:
+
+**`parse_vessel_request(text)`** — the real entry point. Turns free text
+into either a `Parsed` (a validated `VesselCall`, plus which of the six
+tariffs the text supports computing) or a `Rejected` (a reason, not an
+exception). This is what the CLI and the Streamlit app use, always.
 
 ```python
-from tariffs.engine import calculate
-from tariffs.models import VesselCall, Port
+from tariffs.nlp import parse_vessel_request, Rejected
 
-call = VesselCall(port=Port.DURBAN, gross_tonnage=51255, ...)
-result = calculate(call)
-result.totals()     # {"light_dues": 60062.04, ...}
-result.trace_df()    # one row per calculation step (needs pandas)
+result = parse_vessel_request("SUDESTADA, bulk carrier, Durban, GT 51,255, Number of Operations: 2.")
+if isinstance(result, Rejected):
+    print(result.reason)
+else:
+    print(result.totals())   # per-tariff amount, or None where not computable
 ```
 
-It takes a `VesselCall` and returns a `CalculationResult` carrying six
-`TariffResult`s (amount, warnings, and a step-by-step trace) plus
-convenience methods. There is no CLI, no HTTP layer, and no logging to
-stdout inside the engine — a FastAPI layer could wrap `calculate()`
-directly in a later version without touching this code.
-
-### Install and run
-
-This project uses [`uv`](https://docs.astral.sh/uv/) for a project-scoped,
-reproducible environment (not your system/base Python).
-
-```bash
-uv sync              # creates .venv from uv.lock (pydantic + pyyaml only,
-                      # plus pytest / pandas / jupyter as dev-only groups)
-uv run pytest        # run all tests
-uv run jupyter lab    # optional — open notebooks/exploration.ipynb
-```
-
-In VS Code: select `.venv/bin/python` as the interpreter, and the
-**"Python (port-tariff)"** kernel for the notebook.
+**`calculate(vessel_call)`** — the lower-level engine underneath it.
+Takes a complete, trusted `VesselCall` and computes all six tariffs,
+crashing loudly if a required field is missing — no "not computable"
+concept. Used directly by `Parsed.tariffs` internally, by the test suite,
+by the notebook, and by the CLI's `--json` mode (bypasses the parser
+entirely, so the CLI is testable with no API key). **Never call it on a
+`VesselCall` that came from an incomplete `Parsed` result** — §9 explains
+why that specific combination can silently give a wrong number.
 
 ### Repository layout
 
 ```
-config/
-    tariffs_2024_2025.yaml       # rate schedule, extracted from the PDF, with source citations
-    assignment_mapping.yaml      # benchmark output-name adapter (§3)
+config/tariffs_2024_2025.yaml   # rate schedule, extracted from the PDF, with source citations
+config/assignment_mapping.yaml  # benchmark output-name adapter
 tariffs/
-    models.py       # VesselCall, RoundingMode, results/trace
-    schedule.py      # YAML loader + Pydantic schema for the config
-    shapes.py        # the four calculator shapes, each implemented once
-    calculators.py   # one function per tariff
-    modifiers.py     # reductions, surcharges, exemptions
-    engine.py        # the single entry point, calculate()
-    adapter.py       # assignment output mapping
-    nlp.py           # v2: parse_vessel_request() — free text -> validated VesselCall (§11)
-    cli.py           # v3: python -m tariffs.cli (§13)
-tests/               # five v1 layers (SPEC.md §10) + nlp/cli tests for v2/v3
-notebooks/exploration.ipynb   # optional; a consumer of the package, not part of the graded path
-app.py               # v3: streamlit run app.py (§13)
-examples/sudestada.json   # sample VesselCall for `tariffs.cli --json` (no API key needed)
-Dockerfile, docker-compose.yml   # v3: docker compose up (§13)
+    models.py, schedule.py, shapes.py, calculators.py, modifiers.py, engine.py, adapter.py   # v1 engine
+    nlp.py       # v2 — parse_vessel_request()
+    cli.py       # v3 — python -m tariffs.cli
+app.py           # v3 — streamlit run app.py
+tests/           # v1's five layers (SPEC.md §10) + nlp/cli tests
+notebooks/exploration.ipynb   # optional, not part of the graded path
+examples/sudestada.json       # sample VesselCall for --json
+Dockerfile, docker-compose.yml
 ```
 
 **Principle followed throughout:** anything that varies by port, band, or
-tariff edition is *data* (in `config/`); the mathematical mechanism is
-*code* (in `tariffs/`). The four calculator shapes in `shapes.py` are each
-implemented exactly once and parameterised from config — there is no
-`if/elif` cascade over ports anywhere in this package.
+tariff edition is *data* (`config/`); the mathematical mechanism is
+*code* (`tariffs/`). No `if/elif` cascade over ports anywhere.
 
 ---
 
@@ -153,17 +131,15 @@ billed.
 
 **How this is implemented:**
 
-1. Both services are modelled as separate, correctly-named domain
-   calculators (`calculators.berthing_services` and
-   `calculators.running_of_vessel_lines`). Nothing in the engine chooses
-   between them.
+1. Both services are separate, correctly-named domain calculators
+   (`calculators.berthing_services` and `calculators.running_of_vessel_lines`).
+   Nothing in the engine chooses between them.
 2. `berthing_services` (§3.8) fires on every marine service and is fully
    calculated — this is what produces the 19,639.50 figure above.
-3. `running_of_vessel_lines` (§3.9) is **parsed, not calculated**, in v1
-   (see §7 below). It is gated on `VesselCall.mooring_boat_used`; if that
-   flag is `True`, the result carries an explicit warning that a §3.9
-   charge applies but is not computed in this version. It is never
-   silently omitted.
+3. `running_of_vessel_lines` (§3.9) is **parsed, not calculated** (§7). It
+   is gated on `VesselCall.mooring_boat_used`; if `True`, the result
+   carries an explicit warning that a §3.9 charge applies but is not
+   computed. Never silently omitted.
 4. A thin adapter (`tariffs/adapter.py` + `config/assignment_mapping.yaml`)
    maps the assignment's `running_of_vessel_lines` output slot onto the
    `berthing_services` result, carrying this explanation as a `note` **in
@@ -285,27 +261,24 @@ supplied input under-specifies a formula input.
   confident "not applied" on that specific leg.
 - **Public holidays are entirely unmodelled**, not merely "left as an
   edge case." §8.3 hints a holiday might sit outside ordinary hours even
-  at a 24-hour port, but no calendar exists in v1 to test a date against.
-  The out-of-hours derivation is exact for ordinary weekdays and
-  Saturdays, and can be wrong specifically on a public holiday.
+  at a 24-hour port, but no calendar exists to test a date against. The
+  out-of-hours derivation is exact for ordinary weekdays and Saturdays,
+  and can be wrong specifically on a public holiday.
 - **"Stay," for reduction/surcharge eligibility, means actual time in
   port — not `chargeable_period_days`.** The book's own wording for the
   60% reduction ("entire stay does not exceed 48 hours"), the 15%
   reduction ("remaining in port for less than 12 hours"), the 35%
   reduction's "first 30 days," and the 20% long-stay surcharge's "longer
   than 30 days" all describe the vessel's actual physical presence —
-  arrival to departure — which is a different figure from
-  `chargeable_period_days`, the port dues *billing* figure that (per
-  §7.2) is itself often a proxy such as days alongside. This
-  implementation computes "stay" from `arrival`/`departure` for all four
-  conditions, deliberately independent of whatever `chargeable_period_days`
-  is set to. A practical consequence, caught while manually testing this
-  build: setting `call_purpose_bunkers_stores_water_only=True` and only
-  changing `chargeable_period_days` to something under 48 hours will
-  **not** trigger the 60% reduction if `arrival`/`departure` still imply
-  a longer stay — that's correct behaviour, not a bug, but it can look
-  like one if you assume "stay" and "chargeable period" are the same
-  number.
+  arrival to departure — a different figure from `chargeable_period_days`,
+  the port dues *billing* figure that (§7.2) is itself often a proxy such
+  as days alongside. This implementation computes "stay" from
+  `arrival`/`departure`, independent of whatever `chargeable_period_days`
+  is set to. Practical consequence: setting
+  `call_purpose_bunkers_stores_water_only=True` and only changing
+  `chargeable_period_days` to under 48 hours will **not** trigger the 60%
+  reduction if `arrival`/`departure` still imply a longer stay — correct
+  behaviour, not a bug, but easy to mistake for one.
 
 ---
 
@@ -328,346 +301,180 @@ is unresolved (`None`) — `engaged_in_cargo_working`, `is_bona_fide_coaster`,
 cancellation and lateness flags. `mooring_boat_used` is also unresolved
 (taken as not used). This is exactly why the base-case engine alone
 reproduces all six answer-key values without any modifier ever firing.
-
-The one modifier that *is* derived rather than stated for the reference
-case is the out-of-hours check — Durban is a 24-hour port (§8.3), so it
-structurally cannot fire there regardless of the timestamps supplied.
-
----
-
-## 7. Not implemented in v1
-
-Per `SPEC.md` §1 and §7.6, none of the following are built, stubbed with
-`NotImplementedError` in the call path, or given a dependency:
-
-- **§3.9 Running of Vessel Lines charge.** The calculator exists and the
-  `mooring_boat_used` flag is parsed and carried, but no amount is ever
-  computed — only a warning, when the flag is `True` (see §3 above).
-- **South African public holiday calendar.** See §5 above.
-- **Natural-language parsing of the vessel query** (an LLM call turning a
-  free-text description into a `VesselCall`). `VesselCall` is built by
-  hand in v1 and in the notebook; its field set is already complete
-  enough to carry what a future parser would populate (the event flags in
-  particular — see below). **Built in v2 — see §11.** The v1 engine
-  itself was not touched to enable this; §11 explains the boundary.
-- **Any HTTP/API layer.** `calculate()` is a plain function; a FastAPI
-  layer is a v2 concern that should wrap it without modification.
-- **Towage's flat late-arrival fee** (per tug, per half-hour) and the
-  marine services incentive (§9.4) are calculated nowhere — the former
-  needs minutes-late and tug-count data `VesselCall` doesn't carry (warned
-  instead, like §3.9); the latter needs shipping-line identity and
-  national call-count data that has no field in the model at all, and is
-  always reported as "not supported by input," never silently omitted.
-- **PLO duties** (§3.3) and the **small-vessel port dues minimum** (§4.1.1)
-  are captured in config with full provenance but wired into no
-  calculator — both are explicitly out of scope for a commercial vessel
-  call in v1.
+The one modifier that *is* derived rather than stated here is the
+out-of-hours check — Durban is a 24-hour port (§8.3), so it structurally
+cannot fire there regardless of the timestamps supplied.
 
 ---
 
-## 8. Outputs are ex-VAT
+## 7. Not built / future work
 
-Every rate in the source book is ex-VAT (VAT 15%, noted in every page
-footer); this package never applies VAT anywhere. All figures quoted in
-this document, and every `TariffResult.amount`, are ex-VAT ZAR.
+Still not implemented, in any version:
 
----
-
-## 9. Production extensions (brief)
-
-- **LLM parsing layer** turning a free-text vessel/voyage description
-  into a `VesselCall` — the model's tri-state event flags
-  (`mooring_boat_used`, `additional_tug_requested`,
-  `service_cancelled_after_standby`, `late_against_notified_time`, etc.)
-  exist specifically so such a parser has somewhere to put what it finds,
-  without any change to the engine. **Built in v2 — see §11.**
-
-Sketched, not built, for v3:
-
-- **A FastAPI endpoint** wrapping `tariffs.engine.calculate()` directly.
-- **External enrichment** (AIS, vessel registries, port-call history) to
-  resolve currently-unresolvable flags automatically — e.g. confirming
-  bona fide coaster status, hull certification, or a vessel's registered
-  port, instead of requiring them as explicit input.
-- **Interactive resolution** of fields the v2 parser leaves `None` — see
-  §11's LangGraph discussion for why this, specifically, is what would
-  justify introducing a graph.
+- **§3.9 Running of Vessel Lines charge** — the calculator exists and
+  `mooring_boat_used` is parsed, but no amount is computed, only a
+  warning when the flag is `True` (§3).
+- **South African public holiday calendar** — no calendar exists to test
+  a date against (§5).
+- **An HTTP/API layer** — only the CLI and Streamlit UI exist (§9); no
+  FastAPI endpoint yet.
+- **Towage's flat late-arrival fee and the marine services incentive** —
+  need data (minutes late/tug count; shipping-line call counts)
+  `VesselCall` doesn't carry. Reported as unsupported, never silently
+  computed.
+- **PLO duties and the small-vessel port dues minimum** — captured in
+  config with provenance, wired into no calculator (out of scope for a
+  commercial vessel call).
+- **External enrichment** (AIS, registries, port-call history) to
+  resolve currently-unresolvable flags automatically.
+- **Interactive resolution** of fields the parser leaves unresolved —
+  the case that would justify introducing LangGraph (§8).
 
 ---
 
-## 10. Manual verification obligation (not automated)
+## 8. v2: Natural-language parsing layer
 
-Roughly a hundred numbers were extracted from `Port_Tariff.pdf` into
-`config/tariffs_2024_2025.yaml`, and only a handful are exercised by the
-reference case or the automated tests. **The towage table on page 15 in
-particular should be checked cell-by-cell against the source PDF by
-hand** before this config is trusted for any port/GT combination beyond
-what's tested here. This is not re-verified by any automated test, and
-should be repeated if the config is ever hand-edited.
+`parse_vessel_request()` (§1) turns free text into a `Parsed` or a
+`Rejected`. `Parsed.call` can be fed into `calculate()` for the full
+engine trace if the request was complete — the v1 engine itself is
+untouched by any of this.
 
-**Status: done, twice, independently, on 2026-09-12.** First via two
-independent text-extraction passes during the build (plain-text and
-layout-preserving), which is what caught the Saldanha anomaly noted in
-§5. Then via an actual rendered page image of printed page 15, read cell
-by cell against every value in `towage.ports` and `towage.craft_allocation`
-— confirming all of it, including that the Saldanha anomaly is genuinely
-printed that way and not an artifact of text extraction. **The repo
-owner also independently checked page 15 against the config by hand**,
-separately from the two passes above.
+### Two categories of failure — only one is an exception
 
----
-
-## 11. v2: Natural-language parsing layer
-
-One pure function, `tariffs.nlp.parse_vessel_request(request_text) -> ParseResult`,
-turns free text into either a `Parsed` (a validated `VesselCall`, plus
-which of the six tariffs it supports computing) or a `Rejected` (the
-request can't be turned into a tariff calculation at all, with a reason).
-`Parsed.call` goes straight into `tariffs.engine.calculate()` if you want
-the full engine trace/modifiers too — **the v1 engine is untouched**;
-this layer only produces the input the engine already accepted.
-
-```bash
-uv sync --group nlp          # installs langchain-anthropic (not a default group)
-export ANTHROPIC_API_KEY=...  # required at runtime; never hardcoded
-```
-
-```python
-from tariffs.nlp import parse_vessel_request, Parsed, Rejected
-from tariffs.engine import calculate
-
-result = parse_vessel_request(
-    "SUDESTADA, a bulk carrier, called at the Port of Durban. GT 51,255. "
-    "Number of Operations: 2."
-)
-if isinstance(result, Rejected):
-    print(result.reason)               # a normal outcome — not an exception
-else:
-    result.trace_df()                  # one row per field actually read, with evidence
-    result.totals()                    # per-tariff amount, or None where not computable
-    full = calculate(result.call)      # the unchanged v1 engine, for the full trace
-```
-
-### Two categories of failure — one is not an exception
-
-- **A bad request is a normal outcome, returned as `Rejected`, never
-  raised.** Three kinds: the text is **off-topic** (nothing about a
-  vessel or a port call — the reason states what the tool does and gives
-  an example); it names a **port outside the book's eight** (reported by
-  name, not silently treated as the "Other" column any calculator might
-  otherwise fall back to); or it's missing the **hard floor** — `port`
-  and `gross_tonnage`, without which nothing at all can be computed.
-  `Rejected.parsed_so_far` still carries whatever *was* extracted, and
-  `missing_fields` names exactly what wasn't, for the hard-floor case.
-- **A broken program still raises.** The API being unreachable, a
-  malformed model response, or — importantly — **a validation error on a
-  field the model did populate** (a stated GT that's negative, a stated
-  count that's negative) are never caught here. A bad-but-present field
-  must fail loudly; only a field's *absence* is a `Rejected`/"not
-  computable" outcome, never its invalidity.
+- **A bad request is a normal outcome (`Rejected`), never raised.** Three
+  cases: **off-topic** text (reason states what the tool does, with an
+  example); a **port outside the book's eight** (named explicitly — never
+  a silent fall-through to an "Other" column); or missing the **hard
+  floor**, `port`/`gross_tonnage`, without which nothing can be computed.
+  `Rejected.parsed_so_far` keeps whatever *was* extracted;
+  `missing_fields` names what wasn't.
+- **A broken program still raises.** An unreachable API, a malformed
+  response, or — importantly — **a validation error on a field the model
+  did populate** (a stated GT that's negative) are never caught. Only a
+  field's *absence* becomes a `Rejected`/"not computable" outcome; its
+  *invalidity* is always an exception.
 
 ### Incomplete is not rejected — it's partial
 
-A request with `port` and `gross_tonnage` but nothing else is `Parsed`,
-not `Rejected` — light dues and VTS need nothing more. `Parsed.tariffs`
-reports, per tariff, whether its own dependencies were met:
+A request with only `port` and `gross_tonnage` is `Parsed`, not
+`Rejected` — light dues and VTS need nothing more. `Parsed.tariffs`
+reports each tariff's own dependency:
 
 | Tariffs | Also need |
 |---|---|
 | light dues, VTS | nothing beyond port + GT |
-| pilotage, towage, berthing | the number of operations |
-| port dues | the chargeable period |
+| pilotage, towage, berthing | number of operations |
+| port dues | chargeable period |
 
-A tariff whose dependency is missing is reported `computed=False` with a
-`reason` naming the missing field — **never computed with an assumed
-value, and never zero.** In particular, `number_of_operations` is never
-defaulted to 2 (or any other number) when it's simply absent — that's
-the reference case's own figure, not a rule.
+A missing dependency is reported `computed=False` with a reason —
+**never an assumed value, never zero.** `number_of_operations` is never
+defaulted to 2 (the reference case's own figure, not a rule).
 
 ### The extraction contract
 
-- **Extraction, not inference.** The LLM populates a field only when the
-  request text explicitly states it; everything else is left `None`. It
-  is explicitly instructed never to calculate a value — most importantly,
-  never to derive a duration (`chargeable_period_days`, `days_in_sa_waters`)
-  from two dates it was given. If the text doesn't state a duration in
-  those terms, the field stays `None`, exactly as if a human had left it
-  blank.
-- **Evidence per field.** For every field it populates, the model must
-  also return the short, verbatim fragment of the request text that value
-  came from (`Parsed.evidence` / `Rejected.parsed_so_far`, one
-  `ExtractionTraceEntry` per populated field). This is the check that a
-  value was *read*, not invented — a field with a plausible value but no
-  matching text in the evidence would be an obvious tell that something
-  went wrong.
-- **Validation is a hard error — but only for fields that were
-  populated.** `parse_vessel_request()` converts the draft extraction
-  into a real `VesselCall` and lets Pydantic validate it in full —
-  including the constraints added to `VesselCall` itself for this
-  purpose (`gross_tonnage > 0`, `port` a real enum member,
-  `number_of_operations >= 0`, and all duration fields `>= 0`). A failure
-  here raises `pydantic.ValidationError` and is never caught, because a
-  silently-dropped bad field would be indistinguishable from a field that
-  was simply never mentioned — hiding a parsing failure behind normal,
-  unremarkable output. Missing *required* fields (`port`, `gross_tonnage`)
-  are checked *before* this construction step and turned into `Rejected`
-  instead, precisely so that "missing" and "invalid" produce different,
-  correctly-labelled outcomes rather than the same exception.
-- **The schema is generated from `VesselCall`, not hand-duplicated.**
-  `tariffs.nlp._build_extraction_schema()` builds the LLM's structured-
-  output target by walking `VesselCall.model_fields`, so it can't drift
-  out of sync with the real model, and every field's Pydantic
-  `description` (added to `VesselCall` for exactly this purpose) doubles
-  as the guidance the LLM sees in its tool-call schema. Two fixed fields
-  with no `VesselCall` counterpart — `off_topic`, `unrecognized_port` —
-  are added on top, for exactly the two rejection cases above that a
-  per-field `None` can't represent on its own (a missing port and an
-  out-of-scope port both need to be told apart, and both need to be told
-  apart from "off-topic entirely").
+- **Extraction, not inference.** A field is populated only if the text
+  states it explicitly; nothing is calculated — most importantly, a
+  duration (`chargeable_period_days`, `days_in_sa_waters`) is never
+  derived from two dates.
+- **Evidence per field.** Every populated field carries the verbatim
+  text fragment it came from (`Parsed.evidence` / `Rejected.parsed_so_far`)
+  — the check that a value was read, not invented.
+- **Validation is a hard error, but only for populated fields.**
+  Converting the draft into a real `VesselCall` runs full Pydantic
+  validation, including constraints added to `VesselCall` for this
+  purpose (`gross_tonnage > 0`, counts `>= 0`, durations `>= 0`). A
+  failure raises and is never caught. Missing *required* fields are
+  checked *before* this step and become `Rejected` instead — so "missing"
+  and "invalid" are never the same outcome.
+- **The schema is generated from `VesselCall`**, not hand-duplicated
+  (`_build_extraction_schema()` walks `VesselCall.model_fields`), so it
+  can't drift out of sync. Two fixed fields with no `VesselCall`
+  counterpart — `off_topic`, `unrecognized_port` — exist purely to make
+  the rejection cases above distinguishable from an ordinary unpopulated
+  field.
 
 ### Why an LLM for parsing, not for calculation
 
-Extraction is language work — reading a free-text request and identifying
-which of ~25 possible facts it states, in whatever phrasing someone
-happened to use. That's what LLMs are for. Calculation is deterministic —
-the same GT and the same band always produce the same fee, and that has
-to be exactly, auditably true every time, not "usually right." Keeping
-these separate also gives the right failure mode for each: a fact absent
-from the request should come back *absent* (`None`, resolving to the
-engine's documented base case) rather than *guessed* — and an LLM asked
-to also calculate could plausibly "helpfully" fill in a number that looks
-right but isn't traceable to a formula. Nothing in this layer computes a
-tariff; it only ever decides what a `VesselCall` field should be set to.
+Extraction is language work — identifying which of ~25 possible facts a
+request states, in whatever phrasing was used. Calculation is
+deterministic and must be exactly, auditably reproducible every time.
+Keeping them separate also gives the right failure mode: a fact absent
+from the request comes back *absent*, not guessed.
 
-### Why LangGraph was not used in v2 (and what would justify it in v3)
+### Why not LangGraph
 
-A graph earns its complexity when there's branching, a loop, or state
-that persists across steps. v2 is one call in, one call out: text goes
-in, a structured extraction comes back, it's validated, done. Wrapping
-that in a LangGraph node would add a runnable-graph abstraction, a state
-schema, and an execution engine for a single edge with no branches — pure
-ceremony over a plain function call.
+One call in, one call out — no branching, no loop, no state to justify a
+graph. `parse_vessel_request()` is a stateless pure function specifically
+so it *can* become a graph node later without changing its contract.
+What would justify it: **interactive resolution** of fields left `None`
+(a loop with state — which fields are still open) or **external
+enrichment** (AIS/registries, a second step with its own failure modes)
+(§7) — both multi-step, conditional flows a single function isn't.
 
-`parse_vessel_request()` is deliberately written as a stateless, pure
-function for exactly this reason: it can become a graph node later
-without changing its contract. What would actually justify introducing
-LangGraph, in v3:
+### Two timestamp decisions
 
-- **Interactive resolution of unknown fields.** Today, an unresolved
-  field just stays `None` and the engine falls back to its base case
-  (§6). An interactive version — "the text didn't say whether cargo
-  working is happening; ask the user" — needs a loop with state
-  (which fields are still open, what's already been asked) that a graph
-  models naturally and a single function does not.
-- **External enrichment.** Looking up a vessel's registered port, hull
-  certification, or bona fide coaster status from AIS data or a
-  registry (§9) is a second step with its own failure modes, plausibly
-  running conditionally on what parsing left unresolved — again, a
-  multi-step, conditional flow a graph is the right tool for, that one
-  function call is not.
-
-### The two timestamp decisions, stated plainly
-
-Both of these were already true in v1; restated here together because
-v2's free-text input makes it easy to supply timestamps without also
-supplying the figures they're being used as stand-ins for.
-
-1. **Out-of-hours surcharge** (towage/pilotage/berthing, §9.3, §7.5, §3.8):
-   `arrival`/`departure` are used as **proxies** for the inbound/outbound
-   *service* time the surcharge actually triggers on — not the same
-   instant. This is recorded in the trace as **derived-by-proxy, not
-   asserted** (`tariffs/modifiers.py`, `is_out_of_hours()`). In
-   particular, the vessel may have waited at anchorage before berthing,
-   so the arrival timestamp only approximates when the inbound service
-   occurred — it can't be later than the true service time, only earlier
-   or equal.
-2. **Port dues chargeable period** (§7.2): **days alongside** is used as
-   the chargeable period — the answer key was computed this way, and it
-   reconciles exactly (§2, §4). The book's own rule is
-   **entrance-to-entrance** timing, which `chargeable_period_basis` on
-   `VesselCall` already models as a first-class alternative
-   (`PeriodBasis.ENTRANCE_TO_ENTRANCE`) — it is not a config toggle that
-   changes the formula, it is a different *value* for
-   `chargeable_period_days`, supplied instead of the alongside-time proxy
-   whenever real entrance timestamps are available. Both figures for the
-   reference case are shown side by side in §7.2 of `SPEC.md` and §4
-   above: entrance-to-entrance-style arrival-to-departure gives 7.117
-   days (→ 309,853, far off); days alongside gives 3.396 days (→
-   199,549.22, exact). The gap between them is transit time inside the
-   entrance plus anchorage wait — genuine chargeable time the
-   alongside-time proxy omits.
+1. **Out-of-hours surcharge** — `arrival`/`departure` are proxies for the
+   actual service time, recorded in the trace as **derived-by-proxy, not
+   asserted**. The vessel may have waited at anchorage, so arrival only
+   approximates the true inbound service time.
+2. **Port dues chargeable period** — days alongside is used (§2, §4);
+   entrance-to-entrance is `chargeable_period_basis`'s other value,
+   supplied instead whenever real entrance timestamps exist. Not a
+   config toggle — a different *value* for the same field.
 
 ---
 
-## 12. Follow-up / known issues
-
-- **`calculate()` silently assumes 1 service when the count is missing —
-  inconsistent with the v2 parser, not yet fixed.** `calculators.py`'s
-  `_resolved_services()` defaults an unresolved marine service count to
-  1 for pilotage/towage/berthing (the §8.2 base-case decision from v1).
-  `parse_vessel_request()` (§11) never does this — it reports those
-  three as not computable instead. This means `calculate()` and
-  `Parsed.tariffs` can disagree if `calculate()` is ever called directly
-  on an incomplete `VesselCall`: `port_dues` raises loudly if the
-  chargeable period is missing, but pilotage/towage/berthing **do not
-  raise** on a missing operation count — they return a plausible-looking,
-  wrong number instead. Until this is fixed, don't call `calculate()` on
-  a `VesselCall` that didn't come from a fully-`Parsed` result; use
-  `Parsed.tariffs[name].result` (which already carries the full trace)
-  instead of recomputing via `calculate()`.
-
----
-
-## 13. v3: packaging and delivery
+## 9. v3: Packaging and delivery
 
 Wrapping only — `tariffs/cli.py`, `app.py`, `Dockerfile`,
-`docker-compose.yml`. The engine, the calculators, the modifiers, and the
-parsing layer are untouched; nothing in this section contains
-calculation or business logic.
+`docker-compose.yml`. The engine, calculators, modifiers, and parsing
+layer are untouched.
 
-### Two entry points, one shared rule
+Both `python -m tariffs.cli` and `streamlit run app.py` go through
+`parse_vessel_request()` and render whichever result comes back — the
+same four blocks, same order: vessel call + evidence, tariff values
+(never zero for one that's not computable), trace, warnings. Neither
+calls `calculate()` in its normal path. The one exception: the CLI's
+`--json <file>` loads a hand-built `VesselCall` and calls `calculate()`
+directly, bypassing the parser so the CLI is exercisable with no API key
+(`examples/sudestada.json` reproduces the reference case exactly).
 
-Both `tariffs/cli.py` (`python -m tariffs.cli`) and `app.py`
-(`streamlit run app.py`) go through `tariffs.nlp.parse_vessel_request()`
-and render whichever `ParseResult` comes back — `Parsed` (with its
-per-tariff computability) or `Rejected`. **Neither calls
-`tariffs.engine.calculate()` in its normal path.** Both show the same
-four blocks in the same order: parsed vessel call + evidence, tariff
-values (never a zero for one that's not computable), the trace, then
-warnings. The Streamlit app shows the vessel call and evidence *before*
-the results, as specified.
+Both entry points catch broken-program exceptions at the top level only,
+printing/showing one clean message — never a raw traceback, never
+conflated with a `Rejected` result's calm reason.
 
-The one deliberate exception: the CLI's `--json <file>` flag loads a
-hand-built `VesselCall` from JSON and runs it through `calculate()`
-directly, bypassing the parser entirely — specifically so the CLI is
-exercisable with no API key and no LLM call (`examples/sudestada.json`
-ships as a ready-made example, reproducing the six reference values
-exactly). This is the only place in v3 that calls `calculate()`, and it
-never receives parser output — see §12 for why that pairing (parser
-output + a direct `calculate()` call) is specifically the one to avoid.
+**Known inconsistency, not yet fixed:** `calculators.py` still defaults
+an unresolved marine service count to 1 for pilotage/towage/berthing
+when `calculate()` is called directly (v1's original §8.2 base-case
+decision) — `parse_vessel_request()` never does this; it reports those
+as not computable instead. This is exactly why `calculate()` must never
+be called on a `VesselCall` that came from an incomplete `Parsed` result:
+`port_dues` would raise on a missing chargeable period, but
+pilotage/towage/berthing would silently return a plausible-looking,
+wrong number instead. Neither the CLI nor Streamlit ever does this.
 
-Both entry points catch exceptions from a broken program (unreachable
-API, a validation error on a field the model did populate) at the top
-level only, printing/showing a clean message — never a raw traceback,
-and never conflated with a `Rejected` result's calm, structural reason.
+**Packaging:** plain `pip install -e .` is sufficient — `langchain-anthropic`,
+`streamlit`, and `pytest` are core `[project.dependencies]` alongside
+`pydantic`/`pyyaml`; only notebook exploration (`pandas`, `jupyter`) is a
+separate, optional `uv` group. `Dockerfile` installs with plain `pip` (no
+`uv` inside the image) and runs the Streamlit app by default;
+`docker-compose.yml` passes `ANTHROPIC_API_KEY` through from the
+environment (or a local `.env`, read automatically) — never baked into
+the image. The same image runs the test suite via
+`docker compose run --rm app pytest`.
 
-### Packaging
+---
 
-- **Plain `pip install -e .` is sufficient** — `langchain-anthropic` and
-  `streamlit` moved from uv-only dependency groups into core
-  `[project.dependencies]`, alongside `pydantic`, `pyyaml`, and `pytest`
-  (all four are now plain pip-installable, matching this section's own
-  install instructions). Only notebook exploration (`pandas`, `jupyter`,
-  `ipykernel`) remains a separate, optional group — genuinely optional,
-  since notebooks aren't part of the delivery path.
-- **`Dockerfile`** installs the project with plain `pip` (no `uv` inside
-  the image) and runs the Streamlit app by default.
-  **`docker-compose.yml`** passes `ANTHROPIC_API_KEY` through from the
-  host environment (or a local `.env`, which Docker Compose reads
-  automatically) — the key is never baked into the image or committed.
-  The same image runs the test suite via
-  `docker compose run --rm app pytest`, with no separate Dockerfile or
-  service needed for it.
+## 10. Data extraction verification
+
+Roughly a hundred numbers were extracted from `Port_Tariff.pdf` into
+`config/tariffs_2024_2025.yaml`; only a handful are exercised by the
+reference case or the automated tests. The towage table (page 15) was
+checked cell-by-cell against the source by hand — via two independent
+text extractions (catching the Saldanha anomaly, §5) and a rendered page
+image, both confirming every value, plus an independent check by the
+repo owner. Not re-verified by any automated test — repeat this check if
+the config is ever hand-edited.
 
 ---
 
