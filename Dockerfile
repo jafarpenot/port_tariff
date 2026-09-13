@@ -8,6 +8,11 @@ WORKDIR /app
 
 # Plain pip only — no uv inside the image. Keeps the image minimal and
 # matches "verify pip install -e . works" (README §Packaging).
+# Upgrade pip first: an older pip's resolver (whatever a cached base
+# image happens to ship) can fail to resolve this dependency set even
+# though it's perfectly satisfiable — don't depend on base-image vintage.
+RUN pip install --no-cache-dir --upgrade pip
+
 COPY . .
 RUN pip install --no-cache-dir -e .
 
