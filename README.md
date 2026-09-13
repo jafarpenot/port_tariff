@@ -380,11 +380,13 @@ separately from the two passes above.
 
 ## 11. v2: Natural-language parsing layer
 
-One pure function, `tariffs.nlp.parse_vessel_request(request_text) -> ParsedVesselCall`,
-turns free text into a validated `VesselCall`. `ParsedVesselCall.vessel_call`
-then goes straight into `tariffs.engine.calculate()` — **the v1 engine is
-untouched**; this layer only produces the input the engine already
-accepted.
+One pure function, `tariffs.nlp.parse_vessel_request(request_text) -> ParseResult`,
+turns free text into either a `Parsed` (a validated `VesselCall`, plus
+which of the six tariffs it supports computing) or a `Rejected` (the
+request can't be turned into a tariff calculation at all, with a reason).
+`Parsed.call` goes straight into `tariffs.engine.calculate()` if you want
+the full engine trace/modifiers too — **the v1 engine is untouched**;
+this layer only produces the input the engine already accepted.
 
 ```bash
 uv sync --group nlp          # installs langchain-anthropic (not a default group)
@@ -392,16 +394,56 @@ export ANTHROPIC_API_KEY=...  # required at runtime; never hardcoded
 ```
 
 ```python
-from tariffs.nlp import parse_vessel_request
+from tariffs.nlp import parse_vessel_request, Parsed, Rejected
 from tariffs.engine import calculate
 
-parsed = parse_vessel_request(
+result = parse_vessel_request(
     "SUDESTADA, a bulk carrier, called at the Port of Durban. GT 51,255. "
     "Number of Operations: 2."
 )
-parsed.trace_df()             # one row per field actually read, with evidence
-result = calculate(parsed.vessel_call)
+if isinstance(result, Rejected):
+    print(result.reason)               # a normal outcome — not an exception
+else:
+    result.trace_df()                  # one row per field actually read, with evidence
+    result.totals()                    # per-tariff amount, or None where not computable
+    full = calculate(result.call)      # the unchanged v1 engine, for the full trace
 ```
+
+### Two categories of failure — one is not an exception
+
+- **A bad request is a normal outcome, returned as `Rejected`, never
+  raised.** Three kinds: the text is **off-topic** (nothing about a
+  vessel or a port call — the reason states what the tool does and gives
+  an example); it names a **port outside the book's eight** (reported by
+  name, not silently treated as the "Other" column any calculator might
+  otherwise fall back to); or it's missing the **hard floor** — `port`
+  and `gross_tonnage`, without which nothing at all can be computed.
+  `Rejected.parsed_so_far` still carries whatever *was* extracted, and
+  `missing_fields` names exactly what wasn't, for the hard-floor case.
+- **A broken program still raises.** The API being unreachable, a
+  malformed model response, or — importantly — **a validation error on a
+  field the model did populate** (a stated GT that's negative, a stated
+  count that's negative) are never caught here. A bad-but-present field
+  must fail loudly; only a field's *absence* is a `Rejected`/"not
+  computable" outcome, never its invalidity.
+
+### Incomplete is not rejected — it's partial
+
+A request with `port` and `gross_tonnage` but nothing else is `Parsed`,
+not `Rejected` — light dues and VTS need nothing more. `Parsed.tariffs`
+reports, per tariff, whether its own dependencies were met:
+
+| Tariffs | Also need |
+|---|---|
+| light dues, VTS | nothing beyond port + GT |
+| pilotage, towage, berthing | the number of operations |
+| port dues | the chargeable period |
+
+A tariff whose dependency is missing is reported `computed=False` with a
+`reason` naming the missing field — **never computed with an assumed
+value, and never zero.** In particular, `number_of_operations` is never
+defaulted to 2 (or any other number) when it's simply absent — that's
+the reference case's own figure, not a rule.
 
 ### The extraction contract
 
@@ -414,26 +456,35 @@ result = calculate(parsed.vessel_call)
   blank.
 - **Evidence per field.** For every field it populates, the model must
   also return the short, verbatim fragment of the request text that value
-  came from (`ParsedVesselCall.trace`, one `ExtractionTraceEntry` per
-  populated field). This is the check that a value was *read*, not
-  invented — a field with a plausible value but no matching text in the
-  evidence would be an obvious tell that something went wrong.
-- **Validation is a hard error.** `parse_vessel_request()` converts the
-  draft extraction into a real `VesselCall` and lets Pydantic validate it
-  in full — including the constraints added to `VesselCall` itself for
-  this purpose (`gross_tonnage > 0`, `port` a real enum member,
+  came from (`Parsed.evidence` / `Rejected.parsed_so_far`, one
+  `ExtractionTraceEntry` per populated field). This is the check that a
+  value was *read*, not invented — a field with a plausible value but no
+  matching text in the evidence would be an obvious tell that something
+  went wrong.
+- **Validation is a hard error — but only for fields that were
+  populated.** `parse_vessel_request()` converts the draft extraction
+  into a real `VesselCall` and lets Pydantic validate it in full —
+  including the constraints added to `VesselCall` itself for this
+  purpose (`gross_tonnage > 0`, `port` a real enum member,
   `number_of_operations >= 0`, and all duration fields `>= 0`). A failure
-  raises `pydantic.ValidationError`. It is never caught and downgraded to
-  `None`, because a silently-dropped bad field would resolve to the
-  engine's unmodified base case (§6) — indistinguishable from a field
-  that was simply never mentioned. That would hide a parsing failure
-  behind normal, unremarkable output.
+  here raises `pydantic.ValidationError` and is never caught, because a
+  silently-dropped bad field would be indistinguishable from a field that
+  was simply never mentioned — hiding a parsing failure behind normal,
+  unremarkable output. Missing *required* fields (`port`, `gross_tonnage`)
+  are checked *before* this construction step and turned into `Rejected`
+  instead, precisely so that "missing" and "invalid" produce different,
+  correctly-labelled outcomes rather than the same exception.
 - **The schema is generated from `VesselCall`, not hand-duplicated.**
   `tariffs.nlp._build_extraction_schema()` builds the LLM's structured-
   output target by walking `VesselCall.model_fields`, so it can't drift
   out of sync with the real model, and every field's Pydantic
   `description` (added to `VesselCall` for exactly this purpose) doubles
-  as the guidance the LLM sees in its tool-call schema.
+  as the guidance the LLM sees in its tool-call schema. Two fixed fields
+  with no `VesselCall` counterpart — `off_topic`, `unrecognized_port` —
+  are added on top, for exactly the two rejection cases above that a
+  per-field `None` can't represent on its own (a missing port and an
+  out-of-scope port both need to be told apart, and both need to be told
+  apart from "off-topic entirely").
 
 ### Why an LLM for parsing, not for calculation
 
