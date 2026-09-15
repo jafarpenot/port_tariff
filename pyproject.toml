@@ -17,6 +17,9 @@ dependencies = [
     # optional — a plain `pip install -e .` must be enough for both.
     "langchain-anthropic>=0.3",
     "streamlit>=1.35",
+    # HTTP API layer (tariffs/api.py) — same reasoning, core not optional.
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [dependency-groups]

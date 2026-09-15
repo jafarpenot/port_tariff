@@ -8,5 +8,17 @@ services:
       # loads .env automatically) — never baked into the image.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
-# Run the test suite in this same image, instead of the Streamlit app:
+  api:
+    build: .
+    command: ["uvicorn", "tariffs.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # A separate secret from ANTHROPIC_API_KEY — gates who may call
+      # this API at all, checked as a bearer token on every endpoint
+      # except /health. Never baked into the image or committed.
+      - API_TOKEN=${API_TOKEN}
+
+# Run the test suite in the same image as either service:
 #   docker compose run --rm app pytest

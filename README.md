@@ -76,6 +76,7 @@ tariffs/
     models.py, schedule.py, shapes.py, calculators.py, modifiers.py, engine.py, adapter.py   # v1 engine
     nlp.py       # v2 — parse_vessel_request()
     cli.py       # v3 — python -m tariffs.cli
+    api.py       # v3+ — uvicorn tariffs.api:app
 app.py           # v3 — streamlit run app.py
 tests/           # v1's five layers (SPEC.md §10) + nlp/cli tests
 notebooks/exploration.ipynb   # optional, not part of the graded path
@@ -423,19 +424,25 @@ enrichment** (AIS/registries, a second step with its own failure modes)
 
 ## 9. v3: Packaging and delivery
 
-Wrapping only — `tariffs/cli.py`, `app.py`, `Dockerfile`,
-`docker-compose.yml`. The engine, calculators, modifiers, and parsing
-layer are untouched.
+Wrapping only — `tariffs/cli.py`, `app.py`, `tariffs/api.py`,
+`Dockerfile`, `docker-compose.yml`. The engine, calculators, modifiers,
+and parsing layer are untouched.
 
-Both `python -m tariffs.cli` and `streamlit run app.py` go through
-`parse_vessel_request()` and render whichever result comes back — the
-same four blocks, same order: vessel call + evidence, tariff values
-(never zero for one that's not computable), trace, warnings. Neither
-calls `calculate()` directly.
+`python -m tariffs.cli`, `streamlit run app.py`, and `tariffs/api.py`'s
+`POST /calculate` all go through `parse_vessel_request()` and render
+whichever result comes back — the same content, same order: vessel call
++ evidence, tariff values (never zero for one that's not computable),
+trace, warnings. None of the three calls `calculate()` directly.
 
-Both entry points catch broken-program exceptions at the top level only,
-printing/showing one clean message — never a raw traceback, never
-conflated with a `Rejected` result's calm reason.
+The API adds one more thing the CLI/Streamlit don't need: a bearer
+token (`API_TOKEN`, a separate secret from `ANTHROPIC_API_KEY`) required
+on every endpoint except `GET /health` — the only line of defence
+against a public endpoint being used to spend someone else's API
+credits.
+
+All three entry points catch broken-program exceptions at the top level
+only, returning/printing/showing one clean message — never a raw
+traceback, never conflated with a `Rejected` result's calm reason.
 
 **Known inconsistency, not yet fixed:** `calculators.py` still defaults
 an unresolved marine service count to 1 for pilotage/towage/berthing
@@ -448,14 +455,16 @@ pilotage/towage/berthing would silently return a plausible-looking,
 wrong number instead. Neither the CLI nor Streamlit ever does this.
 
 **Packaging:** plain `pip install -e .` is sufficient — `langchain-anthropic`,
-`streamlit`, and `pytest` are core `[project.dependencies]` alongside
-`pydantic`/`pyyaml`; only notebook exploration (`pandas`, `jupyter`) is a
-separate, optional `uv` group. `Dockerfile` installs with plain `pip` (no
-`uv` inside the image) and runs the Streamlit app by default;
-`docker-compose.yml` passes `ANTHROPIC_API_KEY` through from the
+`streamlit`, `fastapi`/`uvicorn`, and `pytest` are all core
+`[project.dependencies]` alongside `pydantic`/`pyyaml`; only notebook
+exploration (`pandas`, `jupyter`) is a separate, optional `uv` group.
+`Dockerfile` installs with plain `pip` (no `uv` inside the image) and
+runs the Streamlit app by default; `docker-compose.yml` adds a second
+`api` service from the *same* image, overriding the command to run
+`uvicorn` instead. Both pass `ANTHROPIC_API_KEY` through from the
 environment (or a local `.env`, read automatically) — never baked into
-the image. The same image runs the test suite via
-`docker compose run --rm app pytest`.
+the image — and the `api` service also passes `API_TOKEN` the same way.
+Either service runs the test suite via `docker compose run --rm app pytest`.
 
 ---
 
