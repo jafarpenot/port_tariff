@@ -289,6 +289,43 @@ def test_missing_chargeable_period_only_blocks_port_dues():
         assert result.tariffs[name].computed is True
 
 
+def test_na_towage_band_is_not_computable_not_a_crash():
+    """Mossel Bay has no published towage rate above 50,000 GT — the
+    source prints 'n/a'. This must report towage as not computable,
+    never raise and take the other five tariffs down with it."""
+    canned = _extraction(
+        port={"value": "mossel_bay", "evidence": "Mossel Bay"},
+        gross_tonnage={"value": 60000.0, "evidence": "60,000 GT"},
+        number_of_operations={"value": 2, "evidence": "2 operations"},
+        chargeable_period_days={"value": 2.0, "evidence": "2 days"},
+    )
+    result = parse_vessel_request("...", llm=_StubChatModel(canned))
+
+    assert isinstance(result, Parsed)
+    assert result.tariffs["towage_dues"].computed is False
+    assert result.tariffs["towage_dues"].result is None
+    assert "no rate published" in result.tariffs["towage_dues"].reason
+    for name in ("light_dues", "vts_dues", "pilotage_dues", "berthing_services", "port_dues"):
+        assert result.tariffs[name].computed is True
+
+
+def test_na_towage_band_east_london_above_100000():
+    """Same case, the other printed n/a: East London above 100,000 GT."""
+    canned = _extraction(
+        port={"value": "east_london", "evidence": "East London"},
+        gross_tonnage={"value": 120000.0, "evidence": "120,000 GT"},
+        number_of_operations={"value": 2, "evidence": "2 operations"},
+        chargeable_period_days={"value": 2.0, "evidence": "2 days"},
+    )
+    result = parse_vessel_request("...", llm=_StubChatModel(canned))
+
+    assert isinstance(result, Parsed)
+    assert result.tariffs["towage_dues"].computed is False
+    assert "no rate published" in result.tariffs["towage_dues"].reason
+    for name in ("light_dues", "vts_dues", "pilotage_dues", "berthing_services", "port_dues"):
+        assert result.tariffs[name].computed is True
+
+
 def test_fully_complete_request_computes_all_six_tariffs():
     canned = _extraction(
         port={"value": "durban", "evidence": "Durban"},

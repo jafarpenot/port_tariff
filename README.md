@@ -383,6 +383,17 @@ A missing dependency is reported `computed=False` with a reason —
 **never an assumed value, never zero.** `number_of_operations` is never
 defaulted to 2 (the reference case's own figure, not a rule).
 
+The same "not computable, not a crash" guarantee also covers a
+different kind of gap: some GT/port combinations have **no published
+rate at all** — the source book prints an explicit "n/a" for towage
+above 50,000 GT at Mossel Bay, and above 100,000 GT at East London
+(§5). `shapes.py` raises a dedicated `RateNotPublished` for exactly this
+case, distinct from a plain `ValueError` (which still means a real
+config bug — a GT matching no band at all — and still crashes loudly);
+`tariffs.nlp` catches only the former, per tariff, so one tariff hitting
+a genuine "n/a" reports `computed=False` without affecting the other
+five.
+
 ### The extraction contract
 
 - **Extraction, not inference.** A field is populated only if the text

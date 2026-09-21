@@ -20,6 +20,17 @@ from .models import RoundingMode
 from .schedule import Band
 
 
+class RateNotPublished(ValueError):
+    """A specific GT/port combination has no published rate — the source
+    book prints an explicit "n/a" there (SPEC.md §5.3), not a gap in our
+    config. Deliberately distinct from a plain ValueError: this is a
+    known, expected case a caller may want to handle gracefully (report
+    "not computable" for just this one tariff), unlike a GT matching no
+    band at all, which signals an actual config bug and should keep
+    crashing loudly.
+    """
+
+
 def ceil_per_100t(gt: float) -> int:
     """"Per 100 tons or part thereof" (SPEC.md §3) — ceil(GT/100)."""
     return math.ceil(gt / 100)
@@ -81,8 +92,8 @@ def banded_base_plus_increment(gt: float, bands: Sequence[Band]) -> float:
     Used by towage."""
     band = _select_band(gt, bands)
     if band.base is None:
-        raise ValueError(
-            f"GT {gt} falls into a band that is n/a for this port in the source."
+        raise RateNotPublished(
+            f"no rate published for GT {gt} at this port — the source prints n/a for this band"
         )
     if band.increment_above_gt is None:
         return band.base

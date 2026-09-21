@@ -57,6 +57,7 @@ from pydantic import BaseModel, Field, create_model
 from . import calculators, modifiers
 from .models import TariffResult, VesselCall
 from .schedule import TariffSchedule, load_schedule
+from .shapes import RateNotPublished
 
 _SUPPORTED_PORTS_TEXT = (
     "Richards Bay, Durban, East London, Ngqura, Port Elizabeth, Mossel Bay, Cape Town, or Saldanha"
@@ -320,14 +321,23 @@ _TARIFF_PLAN: dict[str, tuple[Callable, Callable, Callable[[VesselCall], bool], 
 def _compute_tariff_outcomes(call: VesselCall, schedule: TariffSchedule) -> dict[str, TariffOutcome]:
     outcomes: dict[str, TariffOutcome] = {}
     for name, (calc_fn, mod_fn, dependency_met, missing_field) in _TARIFF_PLAN.items():
-        if dependency_met(call):
-            result = mod_fn(calc_fn(call, schedule), call, schedule)
-            outcomes[name] = TariffOutcome(computed=True, result=result)
-        else:
+        if not dependency_met(call):
             outcomes[name] = TariffOutcome(
                 computed=False,
                 reason=f"not computable — missing {missing_field}",
             )
+            continue
+        try:
+            result = mod_fn(calc_fn(call, schedule), call, schedule)
+        except RateNotPublished as exc:
+            # A structural gap in the source (an explicit "n/a" cell), not
+            # a broken program — same "not computable" shape as a missing
+            # input field, never a crash of the whole request. Any *other*
+            # exception (a GT matching no band at all, a real bug) is not
+            # caught here and propagates as the broken-program case it is.
+            outcomes[name] = TariffOutcome(computed=False, reason=f"not computable — {exc}")
+            continue
+        outcomes[name] = TariffOutcome(computed=True, result=result)
     return outcomes
 
 

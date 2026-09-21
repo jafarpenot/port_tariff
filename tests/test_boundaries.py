@@ -9,7 +9,7 @@ import pytest
 
 from tariffs.models import RoundingMode
 from tariffs.schedule import load_schedule
-from tariffs.shapes import banded_base_plus_increment, per_unit_rate
+from tariffs.shapes import RateNotPublished, banded_base_plus_increment, per_unit_rate
 
 SCHEDULE = load_schedule()
 DURBAN_BANDS = SCHEDULE.towage.ports["durban"].bands
@@ -103,3 +103,29 @@ def test_small_vessel_port_dues_minimum_fee_is_present_with_provenance():
     assert fee.amount == 470.98
     assert fee.source.section == "4.1.1"
     assert fee.source.page == 21
+
+
+# ---------------------------------------------------------------------------
+# n/a bands raise a distinct, catchable exception (SPEC.md §5.3) — this is
+# what lets tariffs.nlp report "not computable" for just one tariff
+# instead of the whole request crashing. A GT matching no band at all is
+# a different, uncaught case: a real config bug, which must keep raising
+# plain ValueError.
+# ---------------------------------------------------------------------------
+
+
+def test_na_band_raises_rate_not_published():
+    mossel_bay_bands = SCHEDULE.towage.ports["mossel_bay"].bands
+    with pytest.raises(RateNotPublished):
+        banded_base_plus_increment(60000, mossel_bay_bands)
+
+
+def test_rate_not_published_is_still_a_value_error():
+    """So any pre-existing bare `except ValueError` still catches it too."""
+    assert issubclass(RateNotPublished, ValueError)
+
+
+def test_gt_matching_no_band_at_all_is_a_plain_value_error_not_rate_not_published():
+    with pytest.raises(ValueError) as exc_info:
+        banded_base_plus_increment(-5, DURBAN_BANDS)
+    assert not isinstance(exc_info.value, RateNotPublished)
