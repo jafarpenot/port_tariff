@@ -116,6 +116,58 @@ def test_evidence_is_recorded_per_populated_field():
     assert len(result.evidence) == 2
 
 
+def test_genuine_evidence_is_marked_verified():
+    text = "The bulk carrier SUDESTADA, GT 51,255, called at the Port of Durban."
+    canned = _extraction(
+        port={"value": "durban", "evidence": "Port of Durban"},
+        gross_tonnage={"value": 51255.0, "evidence": "GT 51,255"},
+    )
+    result = parse_vessel_request(text, llm=_StubChatModel(canned))
+
+    assert isinstance(result, Parsed)
+    assert all(entry.verified for entry in result.evidence)
+
+
+def test_fabricated_evidence_is_marked_unverified():
+    text = "The bulk carrier SUDESTADA, GT 51,255, called at the Port of Durban."
+    canned = _extraction(
+        port={"value": "durban", "evidence": "Port of Durban"},
+        # This quote does not appear anywhere in `text` above.
+        gross_tonnage={"value": 51255.0, "evidence": "gross tonnage fifty-one thousand"},
+    )
+    result = parse_vessel_request(text, llm=_StubChatModel(canned))
+
+    assert isinstance(result, Parsed)
+    by_field = {entry.field: entry.verified for entry in result.evidence}
+    assert by_field["port"] is True
+    assert by_field["gross_tonnage"] is False
+    # Unverified evidence is reported, not rejected or dropped.
+    assert result.call.gross_tonnage == 51255.0
+
+
+def test_evidence_verification_is_case_and_whitespace_insensitive():
+    text = "GT   51,255   at Durban."
+    canned = _extraction(
+        port={"value": "durban", "evidence": "Durban"},
+        gross_tonnage={"value": 51255.0, "evidence": "gt 51,255 at durban"},
+    )
+    result = parse_vessel_request(text, llm=_StubChatModel(canned))
+    assert isinstance(result, Parsed)
+    gt_entry = next(e for e in result.evidence if e.field == "gross_tonnage")
+    assert gt_entry.verified is True
+
+
+def test_empty_evidence_is_never_verified():
+    canned = _extraction(
+        port={"value": "durban", "evidence": "Durban"},
+        gross_tonnage={"value": 51255.0, "evidence": ""},
+    )
+    result = parse_vessel_request("GT 51,255 at Durban", llm=_StubChatModel(canned))
+    assert isinstance(result, Parsed)
+    gt_entry = next(e for e in result.evidence if e.field == "gross_tonnage")
+    assert gt_entry.verified is False
+
+
 def test_trace_df_returns_one_row_per_populated_field():
     pytest.importorskip("pandas")
     canned = _extraction(port={"value": "durban", "evidence": "Durban"}, gross_tonnage={"value": 1000.0, "evidence": "1000 GT"})

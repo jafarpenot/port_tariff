@@ -70,12 +70,14 @@ def _print_trace_steps(steps) -> None:
 
 def render_parsed(parsed: Parsed) -> None:
     _print_header("Parsed vessel call")
-    evidence_by_field = {e.field: e.evidence for e in parsed.evidence}
+    evidence_by_field = {e.field: e for e in parsed.evidence}
     for field_name in VesselCall.model_fields:
         if field_name not in evidence_by_field:
             continue  # only show fields actually populated from the request text
+        entry = evidence_by_field[field_name]
         value = getattr(parsed.call, field_name)
-        print(f'  {field_name:35s} = {value!r}    (from: "{evidence_by_field[field_name]}")')
+        flag = "" if entry.verified else "  [UNVERIFIED QUOTE]"
+        print(f'  {field_name:35s} = {value!r}    (from: "{entry.evidence}"){flag}')
 
     _print_header("Tariffs")
     for name in _TARIFF_ORDER:

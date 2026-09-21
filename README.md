@@ -381,9 +381,17 @@ defaulted to 2 (the reference case's own figure, not a rule).
   states it explicitly; nothing is calculated — most importantly, a
   duration (`chargeable_period_days`, `days_in_sa_waters`) is never
   derived from two dates.
-- **Evidence per field.** Every populated field carries the verbatim
-  text fragment it came from (`Parsed.evidence` / `Rejected.parsed_so_far`)
-  — the check that a value was read, not invented.
+- **Evidence per field, and the quote is checked, not just trusted.**
+  Every populated field carries the verbatim text fragment it came from
+  (`Parsed.evidence` / `Rejected.parsed_so_far`). Each entry also carries
+  `verified: bool` — a cheap, deterministic, case/whitespace-insensitive
+  check that the quoted fragment genuinely appears in the request text.
+  This is reported, not enforced: an unverified field is surfaced, never
+  silently rejected or dropped, and it's a check on the *quote*, not
+  proof the extracted *value* is correct — a fabricated quote is always
+  caught, a genuine-but-wrong reading of real text is not. A fuller
+  accuracy evaluation (a labeled test set, or an LLM-as-judge second
+  pass) is a larger, separate piece of work, deliberately not built here.
 - **Validation is a hard error, but only for populated fields.**
   Converting the draft into a real `VesselCall` runs full Pydantic
   validation, including constraints added to `VesselCall` for this

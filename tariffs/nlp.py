@@ -32,7 +32,9 @@ Division of labour, strictly enforced:
 - **Every populated field carries evidence** — the short, verbatim
   fragment of the request text it was read from — so a populated value
   can be told apart from an invented one. This is carried in
-  `Parsed.evidence` / `Rejected.parsed_so_far`.
+  `Parsed.evidence` / `Rejected.parsed_so_far`, and the quote itself is
+  checked, not just trusted: `ExtractionTraceEntry.verified` records
+  whether that fragment genuinely appears in the request text.
 - **Incomplete is not the same as invalid.** A request missing
   `number_of_operations` or a chargeable period is still `Parsed` — the
   tariffs that need what's missing are reported as not computable
@@ -134,11 +136,22 @@ VesselCallExtraction = _build_extraction_schema()
 
 
 class ExtractionTraceEntry(BaseModel):
-    """One populated field: what was read, and the text it came from."""
+    """One populated field: what was read, and the text it came from.
+
+    `verified` is a cheap, deterministic check — does `evidence` actually
+    appear (case/whitespace-insensitive) in the raw request text? It is
+    **not** a guarantee the extracted `value` is correct, only that the
+    model isn't quoting something that was never in the text. This is
+    reported, not enforced: an unverified field is surfaced here, never
+    silently rejected or dropped — a fuller accuracy evaluation (a
+    labeled test set, or an LLM-as-judge second pass) is a larger,
+    separate piece of work, deliberately not done here.
+    """
 
     field: str
     value: Any
     evidence: str
+    verified: bool = False
 
 
 # Single source of truth for the §3.8/§3.9 explanation (README §3) — used
@@ -237,7 +250,21 @@ def _get_schedule() -> TariffSchedule:
     return _schedule_cache
 
 
-def _collect_populated_fields(extraction: BaseModel) -> tuple[dict[str, Any], list[ExtractionTraceEntry]]:
+def _evidence_is_verifiable(evidence: str, request_text: str) -> bool:
+    """Case/whitespace-insensitive substring check: does `evidence` appear
+    in `request_text` at all? Deliberately simple — no fuzzy matching, no
+    extra dependency. Catches outright fabricated quotes; does not catch
+    a paraphrased-but-genuine one, or confirm the *value* itself is right.
+    """
+    if not evidence.strip():
+        return False
+    normalize = lambda s: " ".join(s.split()).lower()
+    return normalize(evidence) in normalize(request_text)
+
+
+def _collect_populated_fields(
+    extraction: BaseModel, request_text: str
+) -> tuple[dict[str, Any], list[ExtractionTraceEntry]]:
     draft_values: dict[str, Any] = {}
     trace: list[ExtractionTraceEntry] = []
     for field_name in VesselCall.model_fields:
@@ -245,7 +272,15 @@ def _collect_populated_fields(extraction: BaseModel) -> tuple[dict[str, Any], li
         if slot is None or slot.value is None:
             continue
         draft_values[field_name] = slot.value
-        trace.append(ExtractionTraceEntry(field=field_name, value=slot.value, evidence=slot.evidence or ""))
+        evidence = slot.evidence or ""
+        trace.append(
+            ExtractionTraceEntry(
+                field=field_name,
+                value=slot.value,
+                evidence=evidence,
+                verified=_evidence_is_verifiable(evidence, request_text),
+            )
+        )
     return draft_values, trace
 
 
@@ -339,7 +374,7 @@ def parse_vessel_request(
         ]
     )
 
-    draft_values, trace = _collect_populated_fields(extraction)
+    draft_values, trace = _collect_populated_fields(extraction, request_text)
 
     if getattr(extraction, "off_topic", None) is True:
         return Rejected(reason=_OFF_TOPIC_REASON, parsed_so_far=trace, missing_fields=[])
