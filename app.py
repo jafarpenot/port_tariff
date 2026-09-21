@@ -11,7 +11,7 @@ import os
 
 import streamlit as st
 
-from tariffs.nlp import Rejected, parse_vessel_request
+from tariffs.nlp import BERTHING_SERVICES_NOTE, Rejected, parse_vessel_request
 
 st.set_page_config(page_title="Port Tariff Calculator", page_icon="\U0001F6A2")
 st.title("Port Tariff Calculator")
@@ -59,16 +59,20 @@ if st.button("Calculate", type="primary") and request_text.strip():
         st.write("(nothing was extracted)")
 
     st.subheader("Tariffs")
-    # Note: "berthing_services" here is what actually answers the
-    # assignment's "running of vessel lines dues" — see README §3.
-    # Unlike tariffs/cli.py, this table attaches no explanatory note for
-    # that mapping — a known, documented gap (README §3).
+    # "berthing_services" is what actually answers the assignment's
+    # "running of vessel lines dues" — carried in its own "note" column
+    # below (README §3), not just documented separately.
     tariff_rows = []
     for name, outcome in result.tariffs.items():
+        row = {
+            "tariff": name,
+            "note": BERTHING_SERVICES_NOTE if name == "berthing_services" else "",
+        }
         if outcome.computed and outcome.result is not None:
-            tariff_rows.append({"tariff": name, "amount (ZAR)": f"{outcome.result.amount:,.2f}"})
+            row["amount (ZAR)"] = f"{outcome.result.amount:,.2f}"
         else:
-            tariff_rows.append({"tariff": name, "amount (ZAR)": f"not computable — {outcome.reason}"})
+            row["amount (ZAR)"] = f"not computable — {outcome.reason}"
+        tariff_rows.append(row)
     st.table(tariff_rows)
 
     st.subheader("Trace")

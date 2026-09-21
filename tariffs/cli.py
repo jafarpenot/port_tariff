@@ -35,12 +35,9 @@ _TARIFF_LABELS = {
     "towage_dues": "Towage dues",
     "vts_dues": "VTS dues",
     "pilotage_dues": "Pilotage dues",
-    # This label is currently the ONLY place any live delivery layer says
-    # out loud that "running of vessel lines dues" reconciles to the
-    # §3.8 berthing_services calculator, not §3.9 (README §3). The API
-    # and Streamlit app expose the raw "berthing_services" field with no
-    # equivalent note attached — a known, documented gap (README §3),
-    # not something this comment fixes.
+    # This label says it out loud in the CLI's own way; the API and
+    # Streamlit app keep "berthing_services" as the key and attach the
+    # same explanation via nlp.BERTHING_SERVICES_NOTE instead (README §3).
     "berthing_services": "Running of vessel lines dues (via §3.8 berthing services)",
 }
 

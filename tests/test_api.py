@@ -23,6 +23,7 @@ def _reference_parsed() -> Parsed:
         evidence=[ExtractionTraceEntry(field="port", value="durban", evidence="Durban")],
         tariffs={
             "light_dues": TariffOutcome(computed=True, result=_fake_result(60062.04)),
+            "berthing_services": TariffOutcome(computed=True, result=_fake_result(19639.50)),
             "pilotage_dues": TariffOutcome(computed=False, reason="not computable — missing number_of_operations"),
         },
     )
@@ -93,6 +94,20 @@ def test_calculate_parsed_result_shape(monkeypatch):
     assert body["tariffs"]["pilotage_dues"]["computed"] is False
     assert body["tariffs"]["pilotage_dues"]["amount"] is None  # never a silent zero
     assert "number_of_operations" in body["tariffs"]["pilotage_dues"]["reason"]
+
+
+def test_calculate_attaches_berthing_services_note_only_to_that_tariff(monkeypatch):
+    monkeypatch.setenv("API_TOKEN", TOKEN)
+    monkeypatch.setattr(api_module, "parse_vessel_request", lambda text: _reference_parsed())
+
+    response = client.post(
+        "/calculate", json={"request": "..."}, headers={"Authorization": f"Bearer {TOKEN}"}
+    )
+    body = response.json()
+    assert body["tariffs"]["berthing_services"]["note"] is not None
+    assert "§3.8" in body["tariffs"]["berthing_services"]["note"]
+    assert body["tariffs"]["light_dues"]["note"] is None
+    assert body["tariffs"]["pilotage_dues"]["note"] is None
 
 
 def test_calculate_rejected_result_shape(monkeypatch):

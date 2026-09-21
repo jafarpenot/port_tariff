@@ -21,7 +21,7 @@ from typing import Any, Optional
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from .nlp import Rejected, parse_vessel_request
+from .nlp import BERTHING_SERVICES_NOTE, Rejected, parse_vessel_request
 
 app = FastAPI(title="Port Tariff Calculator API", version="1.0")
 
@@ -67,10 +67,14 @@ def calculate_endpoint(payload: CalculateRequest) -> dict[str, Any]:
         "vessel_call": result.call.model_dump(mode="json"),
         "evidence": [e.model_dump() for e in result.evidence],
         "tariffs": {
+            # "berthing_services" is what actually answers the assignment's
+            # "running of vessel lines dues" — carried here as its own
+            # "note" key (README §3), not just documented separately.
             name: {
                 "computed": outcome.computed,
                 "amount": outcome.result.amount if outcome.computed and outcome.result else None,
                 "reason": outcome.reason,
+                "note": BERTHING_SERVICES_NOTE if name == "berthing_services" else None,
                 "trace": (
                     [step.model_dump() for step in outcome.result.trace]
                     if outcome.computed and outcome.result
@@ -78,11 +82,6 @@ def calculate_endpoint(payload: CalculateRequest) -> dict[str, Any]:
                 ),
                 "warnings": outcome.result.warnings if outcome.computed and outcome.result else [],
             }
-            # Note: the "berthing_services" key here is what actually
-            # answers the assignment's "running of vessel lines dues" —
-            # see README §3 for the full §3.8/§3.9 explanation. Unlike
-            # tariffs/cli.py, this response attaches no explanatory note
-            # for that mapping — a known, documented gap (README §3).
             for name, outcome in result.tariffs.items()
         },
     }

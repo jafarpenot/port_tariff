@@ -141,6 +141,17 @@ class ExtractionTraceEntry(BaseModel):
     evidence: str
 
 
+# Single source of truth for the §3.8/§3.9 explanation (README §3) — used
+# by every delivery layer (tariffs/cli.py, tariffs/api.py, app.py) that
+# surfaces the "berthing_services" tariff, so the wording can't drift
+# between them.
+BERTHING_SERVICES_NOTE = (
+    "This is what 'running of vessel lines dues' actually reconciles to — "
+    "Tariff Book §3.8 Berthing Services, not §3.9 Running of Vessel Lines "
+    "(which is parsed but not calculated in this version). See README §3."
+)
+
+
 class TariffOutcome(BaseModel):
     """Whether one tariff could be computed from what was extracted.
 
