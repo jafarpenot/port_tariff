@@ -394,6 +394,22 @@ config bug — a GT matching no band at all — and still crashes loudly);
 a genuine "n/a" reports `computed=False` without affecting the other
 five.
 
+**Current scope, and what extending it would take.** This only covers
+towage today, because towage's config schema is the only one that
+currently allows a rate to be `null` per band (`schedule.Band`) — every
+other tariff's schema requires a real number, so a missing rate there
+would fail at `load_schedule()` time instead (a startup-time config
+error, not a per-request one — arguably safer, but different, and not
+something `_compute_tariff_outcomes` could catch mid-calculation). If a
+future tariff book (e.g. via a PDF-reading automation layer) needs to
+represent a genuine "n/a" for a *different* tariff, extending this means:
+loosen that tariff's schema field to `Optional[float]` the same way
+`Band` already is, and raise the same `RateNotPublished` from that
+tariff's shape function. Nothing in `tariffs.nlp`'s catching logic would
+need to change — it already catches `RateNotPublished` generically for
+every tariff in the loop. Not built yet; documented here for when it's
+needed.
+
 ### The extraction contract
 
 - **Extraction, not inference.** A field is populated only if the text
