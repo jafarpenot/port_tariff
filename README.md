@@ -137,19 +137,19 @@ billed.
    is gated on `VesselCall.mooring_boat_used`; if `True`, the result
    carries an explicit warning that a §3.9 charge applies but is not
    computed. Never silently omitted.
-4. All three delivery layers carry this explanation **in the output
-   object itself**, not only in this document: `tariffs/cli.py` labels
-   the figure *"Running of vessel lines dues (via §3.8 berthing
-   services)"* directly; the API and Streamlit UI keep `berthing_services`
-   as the honest key (that's genuinely what's charged) and attach a
-   `note` string alongside it with the same explanation
-   (`tariffs.nlp.BERTHING_SERVICES_NOTE` — one shared constant, so the
-   wording can't drift between the three). An earlier version had a
-   dedicated `adapter.py` + `config/assignment_mapping.yaml` doing
-   something similar for an assignment-specific output shape, but nothing
-   live ever called it (see §7) — it was removed rather than kept as
-   unused code, and replaced by this smaller, actually-used mechanism.
-   §3.9 itself is never suppressed regardless — its own calculator
+4. All three delivery layers show `berthing_services` as the name
+   everywhere (the honest key — that's genuinely what's charged) and
+   attach the same explanation **in the output object itself**, not only
+   in this document, via one shared constant
+   (`tariffs.nlp.BERTHING_SERVICES_NOTE`, so the wording can't drift
+   between the CLI, the API, and Streamlit): the CLI prints it as a
+   `note:` line right under the figure; the API/Streamlit carry it as a
+   `note` field alongside the amount. An earlier version had a dedicated
+   `adapter.py` + `config/assignment_mapping.yaml` doing something
+   similar for an assignment-specific output shape, but nothing live ever
+   called it (see §7) — it was removed rather than kept as unused code,
+   and replaced by this smaller, actually-used mechanism. §3.9 itself is
+   never suppressed regardless — its own calculator
    always runs and is always exposed under its own name.
 
 ---

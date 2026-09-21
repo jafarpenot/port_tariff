@@ -18,7 +18,7 @@ from typing import Optional
 
 from .engine import calculate
 from .models import CalculationResult, VesselCall
-from .nlp import Parsed, ParseResult, Rejected, parse_vessel_request
+from .nlp import BERTHING_SERVICES_NOTE, Parsed, ParseResult, Rejected, parse_vessel_request
 
 _TARIFF_ORDER = [
     "light_dues",
@@ -35,10 +35,10 @@ _TARIFF_LABELS = {
     "towage_dues": "Towage dues",
     "vts_dues": "VTS dues",
     "pilotage_dues": "Pilotage dues",
-    # This label says it out loud in the CLI's own way; the API and
-    # Streamlit app keep "berthing_services" as the key and attach the
-    # same explanation via nlp.BERTHING_SERVICES_NOTE instead (README §3).
-    "berthing_services": "Running of vessel lines dues (via §3.8 berthing services)",
+    # "berthing_services" everywhere (the honest domain name), consistent
+    # with the API/Streamlit — the §3.8/§3.9 explanation is printed as a
+    # separate note line right below it instead (README §3).
+    "berthing_services": "Berthing services",
 }
 
 
@@ -84,6 +84,8 @@ def render_parsed(parsed: Parsed) -> None:
             continue
         amount = outcome.result.amount if outcome.computed and outcome.result else None
         print(_format_tariff_line(_TARIFF_LABELS[name], amount, outcome.reason))
+        if name == "berthing_services":
+            print(f"    note: {BERTHING_SERVICES_NOTE}")
 
     _print_header("Trace")
     for name in _TARIFF_ORDER:
@@ -136,6 +138,8 @@ def render_calculation_result(call: VesselCall, result: CalculationResult) -> No
     for name in _TARIFF_ORDER:
         tr = by_name[name]
         print(_format_tariff_line(_TARIFF_LABELS[name], tr.amount, None))
+        if name == "berthing_services":
+            print(f"    note: {BERTHING_SERVICES_NOTE}")
 
     _print_header("Trace")
     for tr in by_name.values():
