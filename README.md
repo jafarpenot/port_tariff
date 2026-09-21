@@ -27,6 +27,14 @@ python -m tariffs.cli "your request here"
 ```
 (Already using `uv`? `uv sync && uv run --env-file .env python -m tariffs.cli "..."`.)
 
+**About "3 skipped" in the `pytest` output — this is expected, not broken.**
+3 tests call the real model directly and are skipped automatically unless
+`ANTHROPIC_API_KEY` is set, so a plain `pytest` run never spends money or
+makes a network call on its own. Run them for real with:
+```bash
+uv run --env-file .env pytest -k live
+```
+
 `ANTHROPIC_API_KEY` is the only environment variable required, read at
 runtime — never baked into the Docker image or committed (see `.gitignore`).
 
