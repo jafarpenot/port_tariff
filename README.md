@@ -329,8 +329,6 @@ Still not implemented, in any version:
   warning when the flag is `True` (§3).
 - **South African public holiday calendar** — no calendar exists to test
   a date against (§5).
-- **An HTTP/API layer** — only the CLI and Streamlit UI exist (§9); no
-  FastAPI endpoint yet.
 - **Towage's flat late-arrival fee and the marine services incentive** —
   need data (minutes late/tug count; shipping-line call counts)
   `VesselCall` doesn't carry. Reported as unsupported, never silently
@@ -489,6 +487,22 @@ token (`API_TOKEN`, a separate secret from `ANTHROPIC_API_KEY`) required
 on every endpoint except `GET /health` — the only line of defence
 against a public endpoint being used to spend someone else's API
 credits.
+
+**Calling the deployed instance:**
+```bash
+curl -X POST https://port-tariff-1.onrender.com/calculate \
+  -H "Authorization: Bearer <API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"request": "The bulk carrier SUDESTADA, GT 51,300, called at the Port of Durban. Number of Operations: 2."}'
+```
+`<API_TOKEN>` is not published here — ask for it. `GET /health` needs no
+token:
+```bash
+curl https://port-tariff-1.onrender.com/health
+```
+This is a free-tier Render deployment: if it's been idle, the first
+request can take 30-60 seconds to wake up — not an error, just a cold
+start.
 
 All three entry points catch broken-program exceptions at the top level
 only, returning/printing/showing one clean message — never a raw
