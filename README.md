@@ -6,7 +6,18 @@ free-text vessel-call request, against the 23rd Edition (1 April 2024 –
 
 ## Run it
 
-**Option A — Docker (recommended)**
+**Already deployed — try it now, no setup**
+```bash
+curl -X POST https://port-tariff-1.onrender.com/calculate \
+  -H "Authorization: Bearer <API_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"request": "The bulk carrier SUDESTADA, GT 51,300, called at the Port of Durban. Number of Operations: 2."}'
+```
+`<API_TOKEN>` isn't published here — ask for it. Free-tier Render: if
+it's been idle, the first request can take 30-60s to wake up. Details
+and `GET /health` in §9.
+
+**Option A — Docker (recommended, to run it yourself)**
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...   # or put it in a local .env file
 docker compose up
