@@ -71,9 +71,8 @@ can silently give a wrong number.
 
 ```
 config/tariffs_2024_2025.yaml   # rate schedule, extracted from the PDF, with source citations
-config/assignment_mapping.yaml  # benchmark output-name adapter
 tariffs/
-    models.py, schedule.py, shapes.py, calculators.py, modifiers.py, engine.py, adapter.py   # v1 engine
+    models.py, schedule.py, shapes.py, calculators.py, modifiers.py, engine.py   # v1 engine
     nlp.py       # v2 — parse_vessel_request()
     cli.py       # v3 — python -m tariffs.cli
     api.py       # v3+ — uvicorn tariffs.api:app
@@ -138,12 +137,18 @@ billed.
    is gated on `VesselCall.mooring_boat_used`; if `True`, the result
    carries an explicit warning that a §3.9 charge applies but is not
    computed. Never silently omitted.
-4. A thin adapter (`tariffs/adapter.py` + `config/assignment_mapping.yaml`)
-   maps the assignment's `running_of_vessel_lines` output slot onto the
-   `berthing_services` result, carrying this explanation as a `note` **in
-   the output object itself**, not only in this document. The adapter
-   never suppresses the real §3.9 calculator — its result is always
-   included alongside the mapped slot, under its own name.
+4. `tariffs/cli.py` labels the `berthing_services` figure *"Running of
+   vessel lines dues (via §3.8 berthing services)"* directly in its
+   output — the CLI is the only one of the three delivery layers that
+   currently says this out loud. **Known gap:** the API and Streamlit UI
+   expose the raw `berthing_services` field with no equivalent note; this
+   explanation currently lives here and in the CLI's label only, not
+   embedded in every output object. An earlier version had a dedicated
+   `adapter.py` + `config/assignment_mapping.yaml` doing exactly this for
+   an assignment-specific output shape, but nothing live ever called it
+   (see §7) — it was removed rather than kept as unused code. §3.9 itself
+   is never suppressed regardless — its own calculator always runs and is
+   always exposed under its own name.
 
 ---
 

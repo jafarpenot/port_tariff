@@ -339,8 +339,8 @@ pilotage:
 # ---------------------------------------------------------------------------
 # 7.6 Berthing services — §3.8, page 18
 # This is the calculator that actually produces the assignment's
-# "running of vessel lines dues" benchmark figure. See adapter.py /
-# config/assignment_mapping.yaml (Stage 2) and README §3.8/§3.9 mapping.
+# "running of vessel lines dues" benchmark figure. See README §3
+# (the §3.8/§3.9 mapping) for the full explanation.
 # Per service (x2 here). Fires on every marine service (berthing/unberthing).
 # Column order: Richards Bay | Port Elizabeth/Ngqura | Cape Town | Saldanha |
 # Other Ports. Durban, East London and Mossel Bay fall under "Other Ports".

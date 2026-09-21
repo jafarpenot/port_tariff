@@ -59,6 +59,10 @@ if st.button("Calculate", type="primary") and request_text.strip():
         st.write("(nothing was extracted)")
 
     st.subheader("Tariffs")
+    # Note: "berthing_services" here is what actually answers the
+    # assignment's "running of vessel lines dues" — see README §3.
+    # Unlike tariffs/cli.py, this table attaches no explanatory note for
+    # that mapping — a known, documented gap (README §3).
     tariff_rows = []
     for name, outcome in result.tariffs.items():
         if outcome.computed and outcome.result is not None:

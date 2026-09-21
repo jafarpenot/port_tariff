@@ -78,6 +78,11 @@ def calculate_endpoint(payload: CalculateRequest) -> dict[str, Any]:
                 ),
                 "warnings": outcome.result.warnings if outcome.computed and outcome.result else [],
             }
+            # Note: the "berthing_services" key here is what actually
+            # answers the assignment's "running of vessel lines dues" —
+            # see README §3 for the full §3.8/§3.9 explanation. Unlike
+            # tariffs/cli.py, this response attaches no explanatory note
+            # for that mapping — a known, documented gap (README §3).
             for name, outcome in result.tariffs.items()
         },
     }
