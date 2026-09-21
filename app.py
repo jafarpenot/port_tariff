@@ -71,7 +71,9 @@ if st.button("Calculate", type="primary") and request_text.strip():
         if outcome.computed and outcome.result is not None:
             row["amount (ZAR)"] = f"{outcome.result.amount:,.2f}"
         else:
-            row["amount (ZAR)"] = f"not computable — {outcome.reason}"
+            # outcome.reason already reads "not computable — ..." (built
+            # once, at the source, in tariffs/nlp.py).
+            row["amount (ZAR)"] = outcome.reason
         tariff_rows.append(row)
     st.table(tariff_rows)
 

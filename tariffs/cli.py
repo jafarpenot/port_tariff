@@ -57,7 +57,9 @@ def _format_tariff_line(label: str, amount: Optional[float], reason: Optional[st
     if amount is not None:
         return f"  {label:55s} {amount:>14,.2f} ZAR"
     if reason:
-        return f"  {label:55s} not computable — {reason}"
+        # `reason` already reads "not computable — ..." (built once, at
+        # the source, in tariffs/nlp.py) — don't prepend it again here.
+        return f"  {label:55s} {reason}"
     return f"  {label:55s} not computed"
 
 
