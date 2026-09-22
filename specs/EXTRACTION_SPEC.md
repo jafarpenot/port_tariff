@@ -418,14 +418,17 @@ which errors were seeded, directly or through prompt structure.
    proposal cell by cell against the existing hand-verified YAML, the gold standard.
    Per charge and overall. Also score Map's tagging directly: §3.2 must be tagged
    towage, pilotage and berthing.
-2. **Baseline comparison.** Implement a naive baseline: the whole document plus one
-   extraction call per charge, no map, no assemble, no verifier — but the same
-   Validate node and the same repair budget as the full pipeline. Score it the same
-   way. This gives a clean three-way comparison — baseline, spine (stage 2), spine
-   plus verifier (stage 4) — where each step isolates exactly one contribution:
-   Map/Assemble structure, then the verifier. Without the shared Validate node and
-   budget, a score difference would conflate "the pipeline structure helps" with
-   "having any validation helps."
+2. **Baseline comparison.** Not a separate build: one graph behind two config
+   flags — `context: assembled | whole_document` (whole-document skips Map and
+   Assemble; Extract gets the full text instead of its focused context) and
+   `verifier: on | off`. Scoring code is shared across all three runs. The naive
+   baseline (`whole_document`, `verifier: off`) still gets the same Validate node
+   and the same repair budget as the full pipeline — score it the same way. This
+   gives a clean three-way comparison — baseline, spine (stage 2, `assembled` /
+   `off`), spine plus verifier (stage 4, `assembled` / `on`) — where each step
+   isolates exactly one contribution: Map/Assemble structure, then the verifier.
+   Without the shared Validate node and budget, a score difference would conflate
+   "the pipeline structure helps" with "having any validation helps."
 3. **Verifier catch rate.** Take the gold TNPA config, inject known errors, and give
    each mutated version to the verifier as if it were a proposal. Seed at least: a
    rate shifted into the wrong port column; a surcharge removed; a band boundary
@@ -467,7 +470,11 @@ Stop after each for review.
    green, TNPA outputs unchanged, expressiveness report.
 2. **Pipeline spine without verifier:** nodes 1–6, 8, 9. Checkpoint: TNPA accuracy
    score.
-3. **Baseline** and its score.
+3. **Baseline** and its score — the `whole_document` flag on the stage-2 graph
+   (§8.2), not new code beyond that flag. **Most droppable stage under time
+   pressure:** stage 2's score is the required proof the pipeline works, stage 4's
+   seeded-error catch rate is the strongest demo; if time runs out, skip stage 3 and
+   document it as future work, the same way as Map window-size tuning (§8/§9).
 4. **Verifier** and the seeded-error evaluation. Checkpoint: catch rate, and whether
    accuracy improved over stage 2.
 5. **Schedule registry and selection** (§5.2) in the calculator and parser.
