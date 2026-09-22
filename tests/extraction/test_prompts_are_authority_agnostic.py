@@ -13,9 +13,11 @@ from extraction.prompts import (
     EXTRACT_SYSTEM_PROMPT,
     IDENTITY_SYSTEM_PROMPT,
     MAP_SYSTEM_PROMPT,
+    VERIFY_SYSTEM_PROMPT,
     extract_user_prompt,
     identity_user_prompt,
     map_user_prompt,
+    verify_user_prompt,
 )
 
 # Port names, the authority's own name, the specific sections behind the
@@ -56,6 +58,8 @@ _RENDERED_PROMPTS = {
     "map_user_prompt": map_user_prompt(1, 5, "placeholder window text"),
     "EXTRACT_SYSTEM_PROMPT": EXTRACT_SYSTEM_PROMPT,
     "extract_user_prompt": extract_user_prompt("light_dues", "placeholder context text"),
+    "VERIFY_SYSTEM_PROMPT": VERIFY_SYSTEM_PROMPT,
+    "verify_user_prompt": verify_user_prompt("light_dues", "placeholder proposal summary", "placeholder tool findings"),
 }
 
 
@@ -75,3 +79,4 @@ def test_canonical_charge_keys_are_still_present():
     for key in ["light_dues", "port_dues", "towage", "vts", "pilotage", "berthing_services"]:
         assert key in MAP_SYSTEM_PROMPT
         assert key in EXTRACT_SYSTEM_PROMPT
+        assert key in VERIFY_SYSTEM_PROMPT

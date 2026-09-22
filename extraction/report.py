@@ -12,11 +12,13 @@ from .schemas import (
     CanonicalCharge,
     ChargeExtraction,
     ChargeReportEntry,
+    Disagreement,
     PipelineStatus,
     ProvisionalIdentity,
     ReviewReport,
     ValidationResult,
     ValidationSeverity,
+    VerifierResult,
 )
 
 
@@ -46,8 +48,13 @@ def build_report(
     pipeline_statuses: dict[CanonicalCharge, PipelineStatus],
     repair_counts: dict[CanonicalCharge, int],
     total_pages: int,
+    verify_results: dict[CanonicalCharge, VerifierResult] | None = None,
+    verify_rounds: dict[CanonicalCharge, int] | None = None,
+    disagreements: list[Disagreement] | None = None,
 ) -> ReviewReport:
     is_new_edition, matched_authority = _detect_new_edition(identity)
+    verify_results = verify_results or {}
+    verify_rounds = verify_rounds or {}
 
     charges = []
     for charge in CanonicalCharge:
@@ -55,6 +62,7 @@ def build_report(
         validation = validations.get(charge)
         status = pipeline_statuses.get(charge)
         warnings = [i.message for i in validation.issues if i.severity is ValidationSeverity.WARNING] if validation else []
+        verify_result = verify_results.get(charge)
         charges.append(
             ChargeReportEntry(
                 charge=charge,
@@ -70,6 +78,8 @@ def build_report(
                 sections_considered=extraction.sections_considered if extraction else [],
                 warnings=warnings,
                 repair_attempts=repair_counts.get(charge, 0),
+                verifier_findings=verify_result.findings if verify_result else [],
+                verify_rounds=verify_rounds.get(charge, 0),
             )
         )
 
@@ -90,4 +100,5 @@ def build_report(
         coverage_total_pages=total_pages,
         general_terms_found=assemble_result.general_terms_found,
         assumptions=assumptions,
+        disagreements=disagreements or [],
     )

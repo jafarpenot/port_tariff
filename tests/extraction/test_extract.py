@@ -1,7 +1,16 @@
 from langchain_core.messages import AIMessage
 
 from extraction.extract import extract_all, extract_charge
-from extraction.schemas import CanonicalCharge, ChargeContext, ChargeExtraction, SemanticOutcome, ValidationIssue, ValidationSeverity
+from extraction.schemas import (
+    CanonicalCharge,
+    ChargeContext,
+    ChargeExtraction,
+    SemanticOutcome,
+    ValidationIssue,
+    ValidationSeverity,
+    VerifierFinding,
+    VerifierSeverity,
+)
 
 from .conftest import StubChatModel
 
@@ -97,6 +106,37 @@ def test_extract_all_only_repairs_charges_with_issues():
 
     assert list(results.keys()) == [CanonicalCharge.LIGHT_DUES]
     assert "bad thing" in requested_charges[0]
+
+
+def test_verifier_findings_are_folded_into_the_prompt():
+    seen = {}
+
+    def respond(schema, messages):
+        seen["text"] = messages[-1].content
+        return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED)
+
+    llm = StubChatModel(respond)
+    findings = [VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="rate does not match the source", pages=[5])]
+    extract_charge(CanonicalCharge.VTS, _context(CanonicalCharge.VTS), {1: "text"}, llm, verifier_findings=findings)
+
+    assert "rate does not match the source" in seen["text"]
+    assert "adversarial reviewer" in seen["text"]
+
+
+def test_extract_charge_can_rebut_a_verifier_challenge_and_leave_proposal_unchanged():
+    def respond(schema, messages):
+        return ChargeExtraction(
+            charge=CanonicalCharge.VTS,
+            outcome=SemanticOutcome.MAPPED,
+            rebuttal="The source at page 5 confirms this rate; the reviewer's concern is mistaken.",
+        )
+
+    llm = StubChatModel(respond)
+    findings = [VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="rate does not match the source", pages=[5])]
+    result = extract_charge(CanonicalCharge.VTS, _context(CanonicalCharge.VTS), {1: "text"}, llm, verifier_findings=findings)
+
+    assert result.rebuttal is not None
+    assert "reviewer's concern is mistaken" in result.rebuttal
 
 
 def test_extract_all_runs_every_charge_and_the_request_charge_is_authoritative():

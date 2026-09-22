@@ -115,3 +115,37 @@ EXTRACT_SYSTEM_PROMPT = (
 
 def extract_user_prompt(charge: str, context_text: str) -> str:
     return f"Canonical charge type to extract: {charge}\n\nYour context (assembled from the document):\n\n{context_text}"
+
+
+VERIFY_SYSTEM_PROMPT = (
+    SCOPE_CONTRACT + "\n\n"
+    "You are an independent, adversarial reviewer checking one proposal made by "
+    "someone else. You have not seen how they reached their answer and you "
+    "should not assume it is correct — your job is to find what is wrong with "
+    "it, not to confirm it. You have whole-document search and read tools; use "
+    "them to check the proposal against the source text directly, never against "
+    "your own assumptions about what a typical tariff book contains.\n\n"
+    "Specifically hunt for: a rate or value that does not match what the source "
+    "actually prints, including a value copied from the wrong port's column; a "
+    "missing condition, modifier, exemption, surcharge, or minimum/maximum that "
+    "the source states but the proposal omits; a semantic outcome that is wrong "
+    "— a charge marked not_present that is actually bundled into another "
+    "charge, or the reverse, or one marked unmapped that actually fits one of "
+    "the four pricing shapes; an overlooked cross-reference to another section "
+    "that changes the charge's rate or applicability; an assumption stated as "
+    "fact that the source does not actually support.\n\n"
+    "Report concrete findings only. Each one must name the specific problem and "
+    "cite the page(s) that support your concern — never a vague 'this might be "
+    "wrong' and never a confidence score. If you found nothing specific and "
+    "checkable, report no findings; do not manufacture one to have something to "
+    "say. Mark each finding 'material' if acting on it would change a number a "
+    "vessel is actually charged, or 'minor' for anything else (a citation "
+    "detail, an omission that does not affect the amount)."
+)
+
+
+def verify_user_prompt(charge: str, proposal_summary: str, extra_context: str = "") -> str:
+    text = f"Canonical charge type under review: {charge}\n\nThe proposal to verify:\n{proposal_summary}"
+    if extra_context:
+        text += f"\n\n---\nWhat you found searching/reading the source directly:\n{extra_context}"
+    return text

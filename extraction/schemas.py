@@ -189,6 +189,14 @@ class ChargeExtraction(BaseModel):
     provenance_sections: list[str] = Field(default_factory=list)
     provenance_pages: list[int] = Field(default_factory=list)
     sections_considered: list[SectionConsidered] = Field(default_factory=list)
+    rebuttal: Optional[str] = Field(
+        default=None,
+        description=(
+            "Set only when responding to a verifier challenge (§6.6) and you believe your original "
+            "proposal is correct despite it: a specific, evidence-based explanation citing the source "
+            "text and pages, with the proposal itself left unchanged. Never set on a first-pass extraction."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +232,45 @@ class PipelineStatus(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Node 7 — Verify (§6.6). The one genuinely agentic node: independent
+# context, adversarial objective, concrete findings, no confidence scores.
+# ---------------------------------------------------------------------------
+
+
+class VerifierSeverity(str, Enum):
+    MATERIAL = "material"  # would change a number a vessel is actually charged — drives a repair round
+    MINOR = "minor"  # recorded in the report, does not trigger a repair round
+
+
+class VerifierFinding(BaseModel):
+    severity: VerifierSeverity
+    problem: str = Field(description="A specific, checkable problem — never a vague 'this might be wrong'.")
+    pages: list[int] = Field(default_factory=list, description="The page(s) that support this concern.")
+
+
+class VerifierResult(BaseModel):
+    charge: CanonicalCharge
+    findings: list[VerifierFinding] = Field(default_factory=list)
+
+
+def has_material_finding(result: Optional["VerifierResult"]) -> bool:
+    return result is not None and any(f.severity is VerifierSeverity.MATERIAL for f in result.findings)
+
+
+class Disagreement(BaseModel):
+    """§6.6: still disagreeing after the verify-repair budget is
+    exhausted. Information for the reviewer, not a pipeline failure —
+    never looped until the models agree."""
+
+    charge: CanonicalCharge
+    extractor_interpretation: str
+    extractor_pages: list[int] = Field(default_factory=list)
+    verifier_concern: str
+    verifier_pages: list[int] = Field(default_factory=list)
+    status: str = "unresolved"
+
+
+# ---------------------------------------------------------------------------
 # Node 8 — review report (§7). Written for a business reviewer; must be
 # readable without opening the code.
 # ---------------------------------------------------------------------------
@@ -243,6 +290,8 @@ class ChargeReportEntry(BaseModel):
     sections_considered: list[SectionConsidered] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     repair_attempts: int = 0
+    verifier_findings: list[VerifierFinding] = Field(default_factory=list)
+    verify_rounds: int = 0
 
 
 class ReviewReport(BaseModel):
@@ -255,4 +304,5 @@ class ReviewReport(BaseModel):
     coverage_total_pages: int = 0
     general_terms_found: bool = True
     assumptions: list[str] = Field(default_factory=list)
+    disagreements: list[Disagreement] = Field(default_factory=list)
 

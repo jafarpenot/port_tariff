@@ -18,7 +18,15 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from .llm import structured_call
 from .prompts import EXTRACT_SYSTEM_PROMPT, extract_user_prompt
-from .schemas import CanonicalCharge, ChargeContext, ChargeExtraction, SectionConsidered, SectionConsideredStatus, ValidationIssue
+from .schemas import (
+    CanonicalCharge,
+    ChargeContext,
+    ChargeExtraction,
+    SectionConsidered,
+    SectionConsideredStatus,
+    ValidationIssue,
+    VerifierFinding,
+)
 from .tools import make_tools
 
 MAX_LEAD_ROUNDS = 2
@@ -32,6 +40,22 @@ def _repair_note(issues: list[ValidationIssue]) -> str:
         if issue.allowed_options:
             line += f" (allowed: {issue.allowed_options})"
         lines.append(line)
+    return "\n".join(lines)
+
+
+def _verifier_challenge_note(findings: list[VerifierFinding]) -> str:
+    lines = [
+        "An independent adversarial reviewer, working from the source document directly "
+        "(not from your reasoning), challenges your proposal for this charge:"
+    ]
+    for finding in findings:
+        lines.append(f"- ({finding.severity.value}) {finding.problem} [pages: {finding.pages}]")
+    lines.append(
+        "If you agree, correct your proposal to address this — leave `rebuttal` unset. If you "
+        "believe your original proposal is correct despite this challenge, set `rebuttal` to a "
+        "specific, evidence-based explanation citing the source text and pages, and leave your "
+        "proposal itself unchanged."
+    )
     return "\n".join(lines)
 
 
@@ -71,6 +95,7 @@ def extract_charge(
     llm: Any,
     *,
     repair_issues: list[ValidationIssue] | None = None,
+    verifier_findings: list[VerifierFinding] | None = None,
 ) -> ChargeExtraction:
     leads, tool_results = _run_tool_rounds(charge, context, page_texts, llm)
     combined_text = context.combined_text
@@ -78,6 +103,8 @@ def extract_charge(
         combined_text += "\n\n---\nFollowed a lead outside your original context:\n" + "\n\n".join(tool_results)
     if repair_issues:
         combined_text += "\n\n---\n" + _repair_note(repair_issues)
+    if verifier_findings:
+        combined_text += "\n\n---\n" + _verifier_challenge_note(verifier_findings)
 
     extraction = structured_call(
         llm, ChargeExtraction, EXTRACT_SYSTEM_PROMPT, extract_user_prompt(charge.value, combined_text)
@@ -102,18 +129,24 @@ def extract_all(
     *,
     concurrency_limit: int = DEFAULT_CONCURRENCY_LIMIT,
     repair_issues_by_charge: dict[CanonicalCharge, list[ValidationIssue]] | None = None,
+    verifier_findings_by_charge: dict[CanonicalCharge, list[VerifierFinding]] | None = None,
 ) -> dict[CanonicalCharge, ChargeExtraction]:
     """Charges in `repair_issues_by_charge` get that charge's specific
     validation errors folded into the prompt (§6.5's repair round);
-    every other charge in `charge_contexts` runs a first-pass extraction.
-    Pass a `charge_contexts` containing only the charges to (re-)run —
-    e.g. just the ones that failed Validate — to repair without redoing
-    already-valid charges."""
+    charges in `verifier_findings_by_charge` get an adversarial challenge
+    folded in instead (§6.6's repair round — the two are never expected
+    together, since Validate and Verify run at different graph stages).
+    Every other charge in `charge_contexts` runs a first-pass extraction.
+    Pass a `charge_contexts` containing only the charges to (re-)run to
+    repair without redoing already-settled charges."""
     charges = list(charge_contexts)
     repairs = repair_issues_by_charge or {}
+    challenges = verifier_findings_by_charge or {}
 
     def _call(charge: CanonicalCharge) -> ChargeExtraction:
-        return extract_charge(charge, charge_contexts[charge], page_texts, llm, repair_issues=repairs.get(charge))
+        return extract_charge(
+            charge, charge_contexts[charge], page_texts, llm, repair_issues=repairs.get(charge), verifier_findings=challenges.get(charge)
+        )
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency_limit)) as pool:
         results = list(pool.map(_call, charges))
