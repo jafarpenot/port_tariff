@@ -20,7 +20,13 @@ pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason=
 def test_live_full_pipeline_accuracy_on_tnpa():
     llm = default_llm()
     graph = build_graph()
-    config = {"configurable": {"thread_id": "live-full-run-with-verify", "llm": llm}}
+    # recursion_limit as a safety net: 6 charges x (up to 3 validate-repair
+    # round-trips + up to 1 verify-repair round-trip) plus the fixed nodes
+    # is well under 50 in the worst case — if something unforeseen still
+    # loops, this fails in ~50 steps instead of silently burning real API
+    # cost for the ~14 minutes it took to hit LangGraph's 10,000-step
+    # default the last time this actually happened.
+    config = {"configurable": {"thread_id": "live-full-run-with-verify", "llm": llm}, "recursion_limit": 50}
     result = graph.invoke({"pdf_path": "Port Tariff.pdf"}, config=config)
 
     report = result["report"]
