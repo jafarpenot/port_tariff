@@ -1,0 +1,19 @@
+# Schedule registry (specs/EXTRACTION_SPEC.md §5.2): which schedule file
+# covers a given port, and for what validity period — one entry per schedule
+# (authority + edition), not per port, since a single book can cover many
+# ports. `tariffs.registry.all_registered_ports()` builds the Port enum from
+# this file's `ports` lists (union, first-seen order) — this is genuinely
+# consulted at import time, not a static mirror of tariffs/models.py.
+#
+# `schedule_file` is repo-root-relative. Kept pointing at the existing
+# config/tariffs_2024_2025.yaml rather than moving it under schedules/ (as
+# specs/EXTRACTION_SPEC.md §5.2's own example path would suggest) — that file
+# is referenced by name across tests, the notebook and the README, and this
+# stage's actual value is the registry/selection mechanism working, not the
+# file's specific location. A second schedule (a new TNPA edition, or a
+# different authority) would get its own entry here and its own file under
+# schedules/, once one exists to add.
+- schedule_file: config/tariffs_2024_2025.yaml
+  ports: [richards_bay, durban, east_london, ngqura, port_elizabeth, mossel_bay, cape_town, saldanha]
+  effective_from: 2024-04-01
+  effective_to: 2025-03-31

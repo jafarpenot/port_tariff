@@ -14,6 +14,7 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel
 
+from .registry import schedule_path_for
 from .rules import Basis, Multiplicity, PricingType, RoundingSpec, TimeSpec
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -402,3 +403,12 @@ def load_schedule(path: str | Path = DEFAULT_SCHEDULE_PATH) -> TariffSchedule:
     with open(path, encoding="utf-8") as f:
         raw = yaml.safe_load(f)
     return TariffSchedule.model_validate(raw)
+
+
+def load_schedule_for(port: str, on_date: Optional[date] = None) -> TariffSchedule:
+    """Schedule selection by port and (optionally) date, via
+    schedules/registry.yaml — specs/EXTRACTION_SPEC.md §5.2's consequence
+    for the calculator. `load_schedule()` above is unchanged and still
+    used directly wherever a single fixed file is genuinely wanted (the
+    notebook, --json CLI mode, most tests)."""
+    return load_schedule(schedule_path_for(port, on_date))

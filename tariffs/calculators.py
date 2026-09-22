@@ -83,7 +83,7 @@ def light_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
             subtotal=amount,
         )
     ]
-    return TariffResult(name="light_dues", amount=amount, trace=trace)
+    return TariffResult(name="light_dues", amount=amount, currency=schedule.schedule_identity.currency, trace=trace)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +146,7 @@ def port_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     return TariffResult(
         name="port_dues",
         amount=amount,
+        currency=schedule.schedule_identity.currency,
         trace=trace,
         components={"basic": basic, "incremental": incremental},
     )
@@ -182,7 +183,7 @@ def towage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
             subtotal=amount,
         )
     ]
-    return TariffResult(name="towage_dues", amount=amount, trace=trace, assumptions=[service_note])
+    return TariffResult(name="towage_dues", amount=amount, currency=schedule.schedule_identity.currency, trace=trace, assumptions=[service_note])
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +212,7 @@ def vts_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
             subtotal=amount,
         )
     ]
-    return TariffResult(name="vts_dues", amount=amount, trace=trace)
+    return TariffResult(name="vts_dues", amount=amount, currency=schedule.schedule_identity.currency, trace=trace)
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +246,7 @@ def pilotage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
             subtotal=amount,
         )
     ]
-    return TariffResult(name="pilotage_dues", amount=amount, trace=trace, assumptions=[service_note])
+    return TariffResult(name="pilotage_dues", amount=amount, currency=schedule.schedule_identity.currency, trace=trace, assumptions=[service_note])
 
 
 # ---------------------------------------------------------------------------
@@ -280,7 +281,7 @@ def berthing_services(call: VesselCall, schedule: TariffSchedule) -> TariffResul
             subtotal=amount,
         )
     ]
-    return TariffResult(name="berthing_services", amount=amount, trace=trace, assumptions=[service_note])
+    return TariffResult(name="berthing_services", amount=amount, currency=schedule.schedule_identity.currency, trace=trace, assumptions=[service_note])
 
 
 # ---------------------------------------------------------------------------
@@ -308,4 +309,4 @@ def running_of_vessel_lines(call: VesselCall, schedule: TariffSchedule) -> Tarif
             "A §3.9 Running of Vessel Lines charge applies (mooring_boat_used=True) "
             "but is not calculated in this version — see SPEC.md §7.6 / README."
         )
-    return TariffResult(name="running_of_vessel_lines", amount=None, trace=trace, warnings=warnings)
+    return TariffResult(name="running_of_vessel_lines", amount=None, currency=schedule.schedule_identity.currency, trace=trace, warnings=warnings)

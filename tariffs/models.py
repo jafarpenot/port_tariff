@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .registry import all_registered_ports
 from .rules import RoundingSpec
 
 # ---------------------------------------------------------------------------
@@ -24,18 +25,13 @@ from .rules import RoundingSpec
 # schema, not a models-only concept. Import it from tariffs.rules.
 
 
-class Port(str, Enum):
-    """The eight commercial ports (SPEC.md §8.1). Values match the port keys
-    used in config/tariffs_2024_2025.yaml."""
-
-    RICHARDS_BAY = "richards_bay"
-    DURBAN = "durban"
-    EAST_LONDON = "east_london"
-    NGQURA = "ngqura"
-    PORT_ELIZABETH = "port_elizabeth"
-    MOSSEL_BAY = "mossel_bay"
-    CAPE_TOWN = "cape_town"
-    SALDANHA = "saldanha"
+# Built from schedules/registry.yaml (specs/EXTRACTION_SPEC.md §5.2), not
+# hardcoded — a new registry entry with a new port becomes a valid `Port`
+# member without touching this file. Today's registry has one entry (TNPA)
+# covering the same eight ports this was previously a static list of, so
+# this produces the identical enum shape — verified in
+# tests/test_registry.py, which would fail loudly if that ever drifted.
+Port = Enum("Port", {name.upper(): name for name in all_registered_ports()}, type=str)
 
 
 class VesselType(str, Enum):
