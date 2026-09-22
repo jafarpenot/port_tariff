@@ -28,12 +28,11 @@ Run the test suite in the same image instead of the app:
 docker compose run --rm app pytest
 ```
 Once it's up, the sidebar has a second page, **"Extract a New Tariff"** —
-upload any port authority's tariff PDF (with your own Anthropic API key,
-entered in the page, not the server's) and an LLM pipeline proposes a
-structured rate schedule for you to review. Review only for now: it
-does not yet feed the calculator above — see
-`pages/1_Extract_New_Tariff.py`'s docstring and `specs/EXTRACTION_SPEC.md`
-for why.
+upload any port authority's tariff PDF and an LLM pipeline proposes a
+structured rate schedule for you to review, using the same
+`ANTHROPIC_API_KEY` set above. Review only for now: it does not yet
+feed the calculator above — see `pages/1_Extract_New_Tariff.py`'s
+docstring and `specs/EXTRACTION_SPEC.md` for why.
 
 **Option B — local**
 ```bash

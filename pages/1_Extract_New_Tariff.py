@@ -9,9 +9,8 @@ extraction pipeline's basis/pricing_type/pricing_params vocabulary. A
 generic, pricing-type-driven calculation engine is future work.
 
 Needs the `extraction` optional dependency group: pip install -e .[extraction]
-Needs a visitor's own ANTHROPIC_API_KEY, entered below — never the
-server's environment variable, since this page is shared by everyone
-who opens it.
+Needs ANTHROPIC_API_KEY set in the environment, same as app.py — README
+tells whoever deploys this to set their own key.
 """
 
 import os
@@ -40,6 +39,10 @@ except ImportError:
         "The extraction pipeline isn't installed in this environment. "
         'Install it with `pip install -e ".[extraction]"` and restart the app.'
     )
+    st.stop()
+
+if not os.environ.get("ANTHROPIC_API_KEY"):
+    st.error("ANTHROPIC_API_KEY is not set in this environment. Set it and restart the app.")
     st.stop()
 
 
@@ -125,15 +128,10 @@ for key, default in [
 ]:
     st.session_state.setdefault(key, default)
 
-api_key = st.text_input(
-    "Your Anthropic API key",
-    type="password",
-    help="Used only for this session's LLM calls, kept in memory for this browser session only — never stored or sent anywhere else. Get one at console.anthropic.com.",
-)
 uploaded = st.file_uploader("Port tariff PDF", type=["pdf"])
-st.caption("A run makes many real LLM calls on your own key and can take several minutes and a few dollars, depending on the book's length.")
+st.caption("A run makes many real LLM calls and can take several minutes, depending on the book's length.")
 
-if st.button("Run extraction", type="primary", disabled=not (api_key and uploaded)):
+if st.button("Run extraction", type="primary", disabled=not uploaded):
     st.session_state["extract_result"] = None
     st.session_state["extract_decision"] = None
 
@@ -142,7 +140,7 @@ if st.button("Run extraction", type="primary", disabled=not (api_key and uploade
         tmp_path = tmp.name
 
     thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id, "llm": default_llm(api_key=api_key)}, "recursion_limit": 80}
+    config = {"configurable": {"thread_id": thread_id, "llm": default_llm()}, "recursion_limit": 80}
 
     with st.spinner("Running extraction — split, map, extract, validate, verify. This takes a while."):
         try:
