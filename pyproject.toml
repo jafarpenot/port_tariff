@@ -22,6 +22,15 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
+[project.optional-dependencies]
+# Extraction pipeline (specs/EXTRACTION_SPEC.md §9) — a plain
+# `pip install -e .` must still install only the calculator; opt in with
+# `pip install -e .[extraction]`.
+extraction = [
+    "langgraph>=0.2",
+    "pdfplumber>=0.11",
+]
+
 [dependency-groups]
 # Notebook exploration only — optional, not part of the graded/delivery
 # path. Opt in with `uv sync --group notebook`.
@@ -31,4 +40,4 @@ notebook = ["pandas>=2", "jupyter>=1", "ipykernel>=6"]
 default-groups = ["notebook"]
 
 [tool.setuptools.packages.find]
-include = ["tariffs*"]
+include = ["tariffs*", "extraction*"]

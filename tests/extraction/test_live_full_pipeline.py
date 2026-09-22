@@ -1,0 +1,34 @@
+"""specs/EXTRACTION_SPEC.md §8 eval 1 — the actual Stage 2 checkpoint.
+Runs the full pipeline against the real Port Tariff.pdf and scores it
+cell by cell against the existing hand-verified gold YAML. Real
+Anthropic API calls: identity (1) + Map (7 windows) + Extract (6
+charges, possibly with repair rounds) — skipped unless
+ANTHROPIC_API_KEY is set, same pattern as every other live test here.
+"""
+
+import os
+
+import pytest
+
+from extraction.evaluate import print_score_report, score_report
+from extraction.graph import build_graph
+from extraction.llm import default_llm
+
+pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires a real ANTHROPIC_API_KEY")
+
+
+def test_live_full_pipeline_accuracy_on_tnpa():
+    llm = default_llm()
+    graph = build_graph()
+    config = {"configurable": {"thread_id": "live-full-run", "llm": llm}}
+    result = graph.invoke({"pdf_path": "Port Tariff.pdf"}, config=config)
+
+    report = result["report"]
+    scores = score_report(report)
+    print()
+    print_score_report(report, scores)
+
+    # Not an accuracy assertion (this is a first real run, not a
+    # calibrated threshold) — just confirms the run reached the report
+    # stage for every charge, i.e. nothing crashed or silently vanished.
+    assert len(report.charges) == 6

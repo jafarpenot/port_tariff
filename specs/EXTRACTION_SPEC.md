@@ -205,8 +205,8 @@ chosen library allows.
 ports, edition, dates, currency. Marked provisional.
 
 **3. Map — LLM, parallel, one call per page window.** Default window: 5 pages,
-overlapping by 1 (pages 1–5, 5–9, 9–13, …) — roughly 14 calls for the 54-page TNPA
-book. Window size and overlap are configurable; a window covering the whole
+overlapping by 1 (pages 1–5, 5–9, 9–13, …) — roughly 7 calls for the 27-page TNPA
+PDF (`Port Tariff.pdf`). Window size and overlap are configurable; a window covering the whole
 document is the same node with a different setting, not a different architecture.
 A narrow question per window, structured output:
 
