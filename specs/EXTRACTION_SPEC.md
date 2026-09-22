@@ -490,7 +490,9 @@ Stop after each for review.
 statuses, stage structure and closed enums, node roles and outputs, the invariant,
 hard vs warning checks, routing rules, retry budgets, verifier independence and
 objective, system-error handling, evaluation method, build order, the Map
-window-size default.
+window-size *default value* (5 pages / 1-page overlap) — window size and overlap
+themselves must stay configurable, not hardcoded, since the future-work evaluation
+in §8/§9 requires running Map at other sizes without a code change.
 
 **Left to your judgment:** PDF and table extraction library, prompt wording, tool
 implementations, state class details, report format, file layout inside
