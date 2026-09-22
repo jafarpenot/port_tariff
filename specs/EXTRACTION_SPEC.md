@@ -470,6 +470,23 @@ is asked to prove. What the demo must still show is extraction correctness on a
 different book (naming, currency, new-vs-diff, the four outcomes) — not a second,
 independent proof that date-windowed selection works, which stage 5 already gave.
 
+**Stage 6 result, run live against RAK Ports' 2026 tariff (UAE, 58 pages,
+`tests/extraction/test_live_generalization_demo.py`):** naming reconciliation,
+currency and new-vs-edition detection all generalised correctly to a book with no
+structural resemblance to TNPA's. Identity: authority "RAK Ports", currency `AED`
+(genuinely different from TNPA's `ZAR`), `is_new_edition=False` — correctly not
+mistaken for a TNPA edition. `vts` mapped cleanly. `port_dues` and
+`berthing_services` each exhausted their structural repair budget (3/3) and ended
+`status=EXTRACTION_FAILED` — a legitimate, informative outcome routed to a human
+reviewer, not a crash or a silently-wrong answer. `light_dues` (claimed bundled
+into `port_dues`) and `towage` (claimed unmapped despite a complete per-tug rate
+table in the source) both produced material, unresolved Verify disagreements —
+exactly the mechanism §6.6 describes working as designed on an unfamiliar book.
+`pilotage` mapped but kept a disagreement open past its one verify-repair round
+(missing pilot-waiting and multi-pilot-surcharge clauses). Net: the repair/verify
+machinery does not rubber-stamp a structurally unfamiliar document — it either
+converges correctly or fails/flags honestly.
+
 ---
 
 ## 9. Packaging and docs
