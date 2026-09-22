@@ -13,19 +13,15 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .rules import RoundingSpec
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
-
-
-class RoundingMode(str, Enum):
-    """SPEC.md §5.2. An unknown string fails at config load time, not at
-    calculation runtime."""
-
-    EXACT = "exact"  # use GT as-is (VTS)
-    CEIL_PER_100_T = "ceil_per_100_t"  # ceil(GT/100) (everything else)
-    PRO_RATA_TIME = "pro_rata_time"  # fractional days, no rounding (port dues)
+#
+# RoundingMode moved to tariffs.rules (extraction pipeline spec §4): it's
+# now part of the generalised rule vocabulary shared with the schedule
+# schema, not a models-only concept. Import it from tariffs.rules.
 
 
 class Port(str, Enum):
@@ -178,7 +174,7 @@ class TraceStep(BaseModel):
     page: int
     description: str
     inputs: dict[str, Any] = Field(default_factory=dict)
-    rounding: Optional[RoundingMode] = None
+    rounding: Optional[RoundingSpec] = None
     modifier: Optional[str] = None
     modifier_resolution: Optional[str] = None
     subtotal: Optional[float] = None
@@ -242,7 +238,7 @@ class CalculationResult(BaseModel):
                         "page": step.page,
                         "description": step.description,
                         "inputs": step.inputs,
-                        "rounding": step.rounding.value if step.rounding else None,
+                        "rounding": step.rounding.mode.value if step.rounding else None,
                         "modifier": step.modifier,
                         "modifier_resolution": step.modifier_resolution,
                         "subtotal": step.subtotal,

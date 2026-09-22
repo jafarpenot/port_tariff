@@ -15,6 +15,31 @@
 #
 # `null` is written explicitly wherever the book prints "n/a" for a
 # port/band combination. It is distinct from a missing key.
+#
+# `rounding`, `basis`, `multiplicity`, `pricing_type` and `maximum` below
+# are the generalised rule vocabulary from specs/EXTRACTION_SPEC.md §4
+# (tariffs/rules.py) — closed enums so a value outside them fails at load
+# time, same principle as the old flat `rounding` string, extended to the
+# other things a new tariff book can vary (rounding unit, what a rate is
+# charged on, whether it multiplies by service count, its formula shape).
+
+# ---------------------------------------------------------------------------
+# Schedule identity (specs/EXTRACTION_SPEC.md §5.1) — not consulted by the
+# calculator in v1 (the Port enum stays hardcoded until build stage 5); lets
+# a future schedule registry tell a new TNPA edition apart from a different
+# authority entirely.
+# ---------------------------------------------------------------------------
+schedule_identity:
+  authority: "Transnet National Ports Authority"
+  jurisdiction: "South Africa"
+  ports: [richards_bay, durban, east_london, ngqura, port_elizabeth, mossel_bay, cape_town, saldanha]
+  schedule_name: "TNPA Tariff Book"
+  effective_from: 2024-04-01
+  effective_to: 2025-03-31
+  currency: ZAR
+  tax_treatment: ex_vat
+  source_document_hash: null   # PDF hash was never computed for this edition
+  supersedes: null
 
 # ---------------------------------------------------------------------------
 # 7.1 Light dues — §1.1.1, page 9
@@ -23,8 +48,11 @@
 # ---------------------------------------------------------------------------
 light_dues:
   source: {section: "1.1.1", page: 9}
-  rounding: ceil_per_100_t
-  per_service: false
+  basis: gross_tonnage
+  rounding: {mode: ceil_to_unit, unit: 100}
+  pricing_type: per_unit
+  multiplicity: per_call
+  maximum: null
   scope: "Charged once per South African visit (per financial year for coastal billing), not per port call."
 
   # "All other vessels" — this is the rate that applies to a foreign-flagged
@@ -64,8 +92,16 @@ light_dues:
 # ---------------------------------------------------------------------------
 port_dues:
   source: {section: "4.1.1", page: 21}
-  rounding: pro_rata_time
-  per_service: false
+  basis: gross_tonnage
+  # ceil(GT/100) governs the GT-based `units` in both components (SPEC.md
+  # §7.2). Previously labelled `pro_rata_time`, which actually described
+  # the separate day-based `incremental` axis below, not this one — split
+  # into `rounding` (GT units) and `time` (days) so each is accurate.
+  rounding: {mode: ceil_to_unit, unit: 100}
+  pricing_type: base_plus_increment_times_duration
+  multiplicity: per_call
+  time: {unit_hours: 24, rounding: pro_rata}
+  maximum: null
 
   # basic = ceil(GT/100) x basic_rate_per_100t
   basic_rate_per_100t: 192.73
@@ -140,8 +176,11 @@ port_dues:
 # ---------------------------------------------------------------------------
 towage:
   source: {section: "3.6", page: 15}
-  rounding: ceil_per_100_t
-  per_service: true
+  basis: gross_tonnage
+  rounding: {mode: ceil_to_unit, unit: 100}
+  pricing_type: banded
+  multiplicity: per_service
+  maximum: null
 
   ports:
     richards_bay:
@@ -263,9 +302,12 @@ towage:
 # ---------------------------------------------------------------------------
 vts:
   source: {section: "2.1.1", page: 11}
-  rounding: exact
-  per_service: false
+  basis: gross_tonnage
+  rounding: {mode: exact}
+  pricing_type: per_unit
+  multiplicity: per_call
   minimum_fee: 235.52
+  maximum: null
 
   ports:
     richards_bay:    {rate_per_gt: 0.54}
@@ -294,8 +336,11 @@ vts:
 # ---------------------------------------------------------------------------
 pilotage:
   source: {section: "3.3", page: 13}
-  rounding: ceil_per_100_t
-  per_service: true
+  basis: gross_tonnage
+  rounding: {mode: ceil_to_unit, unit: 100}
+  pricing_type: base_plus_increment
+  multiplicity: per_service
+  maximum: null
 
   ports:
     richards_bay:    {base_fee: 30960.46, per_100t: 10.93}
@@ -347,8 +392,11 @@ pilotage:
 # ---------------------------------------------------------------------------
 berthing_services:
   source: {section: "3.8", page: 18}
-  rounding: ceil_per_100_t
-  per_service: true
+  basis: gross_tonnage
+  rounding: {mode: ceil_to_unit, unit: 100}
+  pricing_type: base_plus_increment
+  multiplicity: per_service
+  maximum: null
 
   ports:
     richards_bay:    {base_fee: 3175.89, per_100t: 13.46}
@@ -386,8 +434,8 @@ berthing_services:
 # ---------------------------------------------------------------------------
 running_of_vessel_lines:
   source: {section: "3.9", page: 19}
-  rounding: ceil_per_100_t   # Not applicable in v1 — no GT-based component; retained for schema symmetry.
-  per_service: true
+  rounding: {mode: ceil_to_unit, unit: 100}   # Not applicable in v1 — no GT-based component; retained for schema symmetry.
+  multiplicity: per_service
   status: parsed_not_calculated
   note: >
     v1 does not calculate this charge. If VesselCall.mooring_boat_used is

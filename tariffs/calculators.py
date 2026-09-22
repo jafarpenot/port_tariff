@@ -8,21 +8,49 @@ that layering happens in modifiers.py / engine.py in a later stage.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from .models import TariffResult, TraceStep, VesselCall
+from .rules import Basis, Multiplicity, round_time
 from .schedule import TariffSchedule
 from .shapes import (
     banded_base_plus_increment,
     base_plus_increment,
     base_plus_increment_times_duration,
-    ceil_per_100t,
     per_unit_rate,
     units_from_gt,
 )
 
 
+def _basis_value(call: VesselCall, basis: Basis) -> float:
+    """Which VesselCall field a tariff's declared Basis reads from
+    (extraction pipeline spec §4). Only GROSS_TONNAGE is wired — SPEC.md
+    §3: NT and DWT are on the vessel sheet but used by no tariff in this
+    book, and VesselCall carries no field for them."""
+    if basis is Basis.GROSS_TONNAGE:
+        return call.gross_tonnage
+    raise NotImplementedError(
+        f"basis {basis!r} is not wired to a VesselCall field — only "
+        "gross_tonnage is used by any tariff in this schedule (SPEC.md §3)."
+    )
+
+
 def _resolved_services(call: VesselCall) -> tuple[int, str]:
     count, note = call.resolved_marine_service_count()
     return (count if count is not None else 1), note
+
+
+def _services_for(call: VesselCall, multiplicity: Multiplicity) -> tuple[int, Optional[str]]:
+    """SPEC.md §3's "per service" doubling, now driven by the tariff's
+    declared Multiplicity instead of being implicit in which calculator
+    function gets called."""
+    if multiplicity is not Multiplicity.PER_SERVICE:
+        return 1, None
+    return _resolved_services(call)
+
+
+def _apply_maximum(amount: float, maximum: Optional[float]) -> float:
+    return amount if maximum is None else min(amount, maximum)
 
 
 # ---------------------------------------------------------------------------
@@ -33,11 +61,13 @@ def _resolved_services(call: VesselCall) -> tuple[int, str]:
 def light_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.light_dues
     rate_cfg = cfg.foreign_and_other_vessels
+    basis_value = _basis_value(call, cfg.basis)
     amount = round(
-        per_unit_rate(call.gross_tonnage, rate_cfg.rate_per_100t, cfg.rounding, rate_cfg.minimum_fee),
+        per_unit_rate(basis_value, rate_cfg.rate_per_100t, cfg.rounding, rate_cfg.minimum_fee),
         2,
     )
-    units = units_from_gt(call.gross_tonnage, cfg.rounding)
+    amount = _apply_maximum(amount, cfg.maximum)
+    units = units_from_gt(basis_value, cfg.rounding)
     trace = [
         TraceStep(
             tariff="Light dues",
@@ -67,16 +97,19 @@ def port_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
         raise ValueError(
             "VesselCall.chargeable_period_days is required for port dues (SPEC.md §7.2)."
         )
+    basis_value = _basis_value(call, cfg.basis)
+    days = round_time(call.chargeable_period_days, cfg.time)
     result = base_plus_increment_times_duration(
-        call.gross_tonnage,
+        basis_value,
         cfg.basic_rate_per_100t,
         cfg.incremental_rate_per_100t_per_day,
-        call.chargeable_period_days,
+        days,
+        cfg.rounding,
     )
     basic = round(result.basic, 2)
     incremental = round(result.incremental, 2)
-    amount = round(basic + incremental, 2)
-    units = ceil_per_100t(call.gross_tonnage)
+    amount = _apply_maximum(round(basic + incremental, 2), cfg.maximum)
+    units = units_from_gt(basis_value, cfg.rounding)
     trace = [
         TraceStep(
             tariff="Port dues",
@@ -126,9 +159,10 @@ def port_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
 def towage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.towage
     port_bands = cfg.ports[call.port.value].bands
-    per_service_amount = banded_base_plus_increment(call.gross_tonnage, port_bands)
-    services, service_note = _resolved_services(call)
-    amount = round(per_service_amount * services, 2)
+    basis_value = _basis_value(call, cfg.basis)
+    per_service_amount = banded_base_plus_increment(basis_value, port_bands)
+    services, service_note = _services_for(call, cfg.multiplicity)
+    amount = _apply_maximum(round(per_service_amount * services, 2), cfg.maximum)
     trace = [
         TraceStep(
             tariff="Towage dues",
@@ -159,7 +193,8 @@ def towage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
 def vts_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.vts
     rate = cfg.ports[call.port.value].rate_per_gt
-    amount = round(per_unit_rate(call.gross_tonnage, rate, cfg.rounding, cfg.minimum_fee), 2)
+    basis_value = _basis_value(call, cfg.basis)
+    amount = _apply_maximum(round(per_unit_rate(basis_value, rate, cfg.rounding, cfg.minimum_fee), 2), cfg.maximum)
     trace = [
         TraceStep(
             tariff="VTS dues",
@@ -187,11 +222,12 @@ def vts_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
 def pilotage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.pilotage
     rate_cfg = cfg.ports[call.port.value]
+    basis_value = _basis_value(call, cfg.basis)
     per_service_amount = base_plus_increment(
-        call.gross_tonnage, rate_cfg.base_fee, rate_cfg.per_100t, cfg.rounding
+        basis_value, rate_cfg.base_fee, rate_cfg.per_100t, cfg.rounding
     )
-    services, service_note = _resolved_services(call)
-    amount = round(per_service_amount * services, 2)
+    services, service_note = _services_for(call, cfg.multiplicity)
+    amount = _apply_maximum(round(per_service_amount * services, 2), cfg.maximum)
     trace = [
         TraceStep(
             tariff="Pilotage dues",
@@ -221,11 +257,12 @@ def pilotage_dues(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
 def berthing_services(call: VesselCall, schedule: TariffSchedule) -> TariffResult:
     cfg = schedule.berthing_services
     rate_cfg = cfg.ports[call.port.value]
+    basis_value = _basis_value(call, cfg.basis)
     per_service_amount = base_plus_increment(
-        call.gross_tonnage, rate_cfg.base_fee, rate_cfg.per_100t, cfg.rounding
+        basis_value, rate_cfg.base_fee, rate_cfg.per_100t, cfg.rounding
     )
-    services, service_note = _resolved_services(call)
-    amount = round(per_service_amount * services, 2)
+    services, service_note = _services_for(call, cfg.multiplicity)
+    amount = _apply_maximum(round(per_service_amount * services, 2), cfg.maximum)
     trace = [
         TraceStep(
             tariff="Berthing services (§3.8)",

@@ -11,7 +11,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from tariffs.models import Port, RoundingMode
+from tariffs.models import Port
+from tariffs.rules import PricingType, RoundingMode
 from tariffs.schedule import DEFAULT_SCHEDULE_PATH, TariffSchedule, load_schedule
 
 SCHEDULE = load_schedule()
@@ -170,11 +171,32 @@ def test_pilotage_plo_duties_and_surcharges_carry_source():
 @pytest.mark.parametrize("tariff_name", RATED_TARIFFS)
 def test_rounding_parses_to_enum(tariff_name):
     cfg = getattr(SCHEDULE, tariff_name)
-    assert isinstance(cfg.rounding, RoundingMode)
+    assert isinstance(cfg.rounding.mode, RoundingMode)
 
 
 def test_unknown_rounding_value_fails_at_load_time():
     bad = copy.deepcopy(RAW)
-    bad["light_dues"]["rounding"] = "made_up_mode"
+    bad["light_dues"]["rounding"] = {"mode": "made_up_mode"}
     with pytest.raises(ValidationError):
         TariffSchedule.model_validate(bad)
+
+
+# ---------------------------------------------------------------------------
+# pricing_type (extraction pipeline spec §4) matches the shape the
+# calculator actually uses — a config/code drift check, not a values check.
+# ---------------------------------------------------------------------------
+
+PRICING_TYPES_BY_TARIFF = {
+    "light_dues": PricingType.PER_UNIT,
+    "port_dues": PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION,
+    "towage": PricingType.BANDED,
+    "vts": PricingType.PER_UNIT,
+    "pilotage": PricingType.BASE_PLUS_INCREMENT,
+    "berthing_services": PricingType.BASE_PLUS_INCREMENT,
+}
+
+
+@pytest.mark.parametrize("tariff_name,expected", PRICING_TYPES_BY_TARIFF.items())
+def test_pricing_type_matches_the_calculator(tariff_name, expected):
+    cfg = getattr(SCHEDULE, tariff_name)
+    assert cfg.pricing_type == expected

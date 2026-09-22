@@ -7,13 +7,14 @@ and is validated here. An unknown `rounding` string fails at load time
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import yaml
 from pydantic import BaseModel
 
-from .models import RoundingMode
+from .rules import Basis, Multiplicity, PricingType, RoundingSpec, TimeSpec
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCHEDULE_PATH = _REPO_ROOT / "config" / "tariffs_2024_2025.yaml"
@@ -22,6 +23,27 @@ DEFAULT_SCHEDULE_PATH = _REPO_ROOT / "config" / "tariffs_2024_2025.yaml"
 class Source(BaseModel):
     section: str
     page: int
+
+
+# ---------------------------------------------------------------------------
+# Schedule identity (extraction pipeline spec §5.1) — lets a future schedule
+# registry (build stage 5) tell a new edition of this schedule apart from a
+# different authority entirely. Not consulted by the calculator in v1; the
+# Port enum stays hardcoded until that stage, per specs/EXTRACTION_SPEC.md §5.2.
+# ---------------------------------------------------------------------------
+
+
+class ScheduleIdentity(BaseModel):
+    authority: str
+    jurisdiction: str
+    ports: list[str]
+    schedule_name: str
+    effective_from: date
+    effective_to: date
+    currency: str
+    tax_treatment: str
+    source_document_hash: Optional[str] = None
+    supersedes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -73,8 +95,11 @@ class CoastalBilling(BaseModel):
 
 class LightDues(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
+    maximum: Optional[float] = None
     scope: str
     foreign_and_other_vessels: LightDuesForeignRate
     self_propelled_at_registered_port: LightDuesRegisteredRate
@@ -108,8 +133,12 @@ class LongStaySurcharge(BaseModel):
 
 class PortDues(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
+    time: Optional[TimeSpec] = None
+    maximum: Optional[float] = None
     basic_rate_per_100t: float
     incremental_rate_per_100t_per_day: float
     small_vessel_minimum_fee: SmallVesselMinimumFee
@@ -173,8 +202,11 @@ class TowageSurcharges(BaseModel):
 
 class Towage(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
+    maximum: Optional[float] = None
     ports: dict[str, PortBands]
     craft_allocation: CraftAllocation
     surcharges: TowageSurcharges
@@ -191,9 +223,12 @@ class VTSPortRate(BaseModel):
 
 class VTS(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
     minimum_fee: float
+    maximum: Optional[float] = None
     ports: dict[str, VTSPortRate]
     exemptions: list[str]
 
@@ -234,8 +269,11 @@ class PLODuties(BaseModel):
 
 class Pilotage(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
+    maximum: Optional[float] = None
     ports: dict[str, PilotagePortRate]
     surcharges: PilotageSurcharges
     plo_duties: PLODuties
@@ -264,8 +302,11 @@ class BerthingSurcharges(BaseModel):
 
 class BerthingServices(BaseModel):
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    basis: Basis
+    rounding: RoundingSpec
+    pricing_type: PricingType
+    multiplicity: Multiplicity
+    maximum: Optional[float] = None
     ports: dict[str, BerthingPortRate]
     surcharges: BerthingSurcharges
     tanker_attendance_mossel_bay_saldanha_per_hour: float
@@ -282,9 +323,14 @@ class CancelledAfterStandby(BaseModel):
 
 
 class RunningOfVesselLines(BaseModel):
+    """Not calculated in v1 (SPEC.md §7.6 item 3) — `rounding` and
+    `multiplicity` are retained only for schema symmetry with the other
+    six tariffs; no `pricing_type` or `basis` is declared since no shape
+    is actually applied to this block's rates."""
+
     source: Source
-    rounding: RoundingMode
-    per_service: bool
+    rounding: RoundingSpec
+    multiplicity: Multiplicity
     status: str
     note: str
     ports: dict[str, RunningOfLinesPortRate]
@@ -340,6 +386,7 @@ class MarineServicesIncentive(BaseModel):
 
 
 class TariffSchedule(BaseModel):
+    schedule_identity: ScheduleIdentity
     light_dues: LightDues
     port_dues: PortDues
     towage: Towage

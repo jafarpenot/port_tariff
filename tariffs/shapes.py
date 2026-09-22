@@ -16,7 +16,7 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
-from .models import RoundingMode
+from .rules import RoundingSpec, round_value
 from .schedule import Band
 
 
@@ -31,31 +31,20 @@ class RateNotPublished(ValueError):
     """
 
 
-def ceil_per_100t(gt: float) -> int:
-    """"Per 100 tons or part thereof" (SPEC.md §3) — ceil(GT/100)."""
-    return math.ceil(gt / 100)
-
-
-def units_from_gt(gt: float, rounding: RoundingMode) -> float:
-    """Derive the billable 'units' quantity from GT per the rate's
-    RoundingMode (SPEC.md §6). Only EXACT and CEIL_PER_100_T describe a
-    GT-based unit; PRO_RATA_TIME is reserved for port dues' time-based
-    rounding (see base_plus_increment_times_duration below) and is never
-    passed here."""
-    if rounding is RoundingMode.EXACT:
-        return gt
-    if rounding is RoundingMode.CEIL_PER_100_T:
-        return ceil_per_100t(gt)
-    raise ValueError(
-        f"{rounding!r} does not describe a GT-based unit rounding "
-        "(SPEC.md §5.2)."
-    )
+def units_from_gt(gt: float, rounding: RoundingSpec) -> float:
+    """Derive the billable 'units' quantity from a basis value (e.g. GT)
+    per the rate's RoundingSpec (extraction pipeline spec §4 — the unit
+    is a parameter, not hardcoded to 100). PRO_RATA is reserved for
+    time-based rounding (see round_time in tariffs.rules) and is not
+    expected here, but is not rejected — round_value passes it through
+    unrounded like EXACT."""
+    return round_value(gt, rounding)
 
 
 def per_unit_rate(
     gt: float,
     rate: float,
-    rounding: RoundingMode,
+    rounding: RoundingSpec,
     minimum: float | None = None,
 ) -> float:
     """units x rate, then apply minimum. Used by light dues, VTS."""
@@ -70,7 +59,7 @@ def base_plus_increment(
     gt: float,
     base: float,
     rate: float,
-    rounding: RoundingMode,
+    rounding: RoundingSpec,
 ) -> float:
     """base + units x rate. Used by pilotage, berthing."""
     units = units_from_gt(gt, rounding)
@@ -120,15 +109,17 @@ def base_plus_increment_times_duration(
     basic_rate: float,
     daily_rate: float,
     days: float,
+    rounding: RoundingSpec,
 ) -> DurationChargeResult:
     """units x basic + units x daily x days. Used by port dues.
 
-    `units` is ceil(GT/100) — the book's formula bakes this in explicitly
-    (SPEC.md §7.2) independent of the tariff's own `rounding` field, which
-    for port dues (`pro_rata_time`) instead asserts that `days` is used as
-    a raw fraction, never rounded or truncated.
+    `units` comes from `rounding` (SPEC.md §7.2: ceil(GT/100) in this
+    book — extraction pipeline spec §4 makes the 100 a parameter rather
+    than hardcoding it here). `days` is a separate axis, governed by the
+    tariff's `time` spec (tariffs.rules.round_time) — pro rata in this
+    book, i.e. never rounded or truncated.
     """
-    units = ceil_per_100t(gt)
+    units = units_from_gt(gt, rounding)
     basic = units * basic_rate
     incremental = units * daily_rate * days
     return DurationChargeResult(basic=basic, incremental=incremental)

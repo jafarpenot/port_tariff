@@ -7,9 +7,11 @@ import math
 
 import pytest
 
-from tariffs.models import RoundingMode
+from tariffs.rules import RoundingMode, RoundingSpec
 from tariffs.schedule import load_schedule
 from tariffs.shapes import RateNotPublished, banded_base_plus_increment, per_unit_rate
+
+EXACT = RoundingSpec(mode=RoundingMode.EXACT)
 
 SCHEDULE = load_schedule()
 DURBAN_BANDS = SCHEDULE.towage.ports["durban"].bands
@@ -66,7 +68,7 @@ def test_towage_100000_and_100001_fall_in_different_bands():
 def test_vts_minimum_fee_applies_for_a_small_vessel():
     rate = SCHEDULE.vts.ports["durban"].rate_per_gt
     minimum = SCHEDULE.vts.minimum_fee
-    amount = per_unit_rate(gt=100, rate=rate, rounding=RoundingMode.EXACT, minimum=minimum)
+    amount = per_unit_rate(gt=100, rate=rate, rounding=EXACT, minimum=minimum)
     assert amount == pytest.approx(minimum, abs=0.01)
 
 
@@ -74,7 +76,7 @@ def test_vts_minimum_fee_does_not_apply_above_threshold():
     rate = SCHEDULE.vts.ports["durban"].rate_per_gt
     minimum = SCHEDULE.vts.minimum_fee
     large_gt = 10000
-    amount = per_unit_rate(gt=large_gt, rate=rate, rounding=RoundingMode.EXACT, minimum=minimum)
+    amount = per_unit_rate(gt=large_gt, rate=rate, rounding=EXACT, minimum=minimum)
     assert amount == pytest.approx(large_gt * rate, abs=0.01)
     assert amount > minimum
 
@@ -84,8 +86,8 @@ def test_vts_minimum_fee_threshold_boundary():
     minimum = SCHEDULE.vts.minimum_fee
     threshold_gt = minimum / rate  # exact GT where rate x GT == minimum
 
-    just_below = per_unit_rate(gt=threshold_gt - 1, rate=rate, rounding=RoundingMode.EXACT, minimum=minimum)
-    just_above = per_unit_rate(gt=threshold_gt + 1, rate=rate, rounding=RoundingMode.EXACT, minimum=minimum)
+    just_below = per_unit_rate(gt=threshold_gt - 1, rate=rate, rounding=EXACT, minimum=minimum)
+    just_above = per_unit_rate(gt=threshold_gt + 1, rate=rate, rounding=EXACT, minimum=minimum)
 
     assert just_below == pytest.approx(minimum, abs=0.01)
     assert just_above > minimum
