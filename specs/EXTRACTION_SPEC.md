@@ -204,9 +204,11 @@ chosen library allows.
 **2. Provisional schedule identity — LLM, once.** From the opening pages: authority,
 ports, edition, dates, currency. Marked provisional.
 
-**3. Map — LLM, parallel, one call per page window.** Overlapping windows (e.g.
-pages 1–2, 2–3, 3–4…) so sections and tables crossing a page break aren't cut. A
-narrow question per window, structured output:
+**3. Map — LLM, parallel, one call per page window.** Default window: 5 pages,
+overlapping by 1 (pages 1–5, 5–9, 9–13, …) — roughly 14 calls for the 54-page TNPA
+book. Window size and overlap are configurable; a window covering the whole
+document is the same node with a different setting, not a different architecture.
+A narrow question per window, structured output:
 
 - section numbers and headings present
 - section type: charge / general terms / irrelevant
@@ -216,8 +218,19 @@ narrow question per window, structured output:
 - any schedule metadata found
 
 A narrow per-window question is more likely to catch a single qualifying sentence
-than a whole-document pass. Every page is read by construction; there is nothing to
-check afterwards.
+than a whole-document pass — long-context models are good at *finding* things,
+weaker at *exhaustively listing* every sentence touching one of six charges across
+80 pages, and that output tends to be silently incomplete. Every page is read by
+construction; there is nothing to check afterwards. Windowing does not resend
+content wastefully either: with 1-page overlap each page is sent about twice total,
+versus once per charge for a whole-document approach.
+
+Windows are weaker at connecting distant pages (e.g. "except vessels under clause
+4.7", twenty pages later) — by design, not a gap: Map only records the reference,
+Assemble resolves it, and Extract receives both sections together in its focused
+context. Global reasoning happens at Extract, not Map. An agentic discovery node
+choosing what to read was considered and rejected again here: a coverage check that
+only verifies labels is exactly the weakness this design exists to remove.
 
 **4. Assemble — Python.**
 
@@ -390,13 +403,29 @@ code.
 
 All results go in the docs.
 
+**Cross-cutting constraint: authority-agnostic prompts.** No prompt used by Map,
+Assemble, Extract or Verify may reference TNPA-specific facts — port names, section
+numbers (§3.2, §3.8, §3.9), or cited rate values from this book. If TNPA facts leak
+into a prompt, the accuracy score in (1) and the catch rate in (3) measure
+memorisation, not generalisation — and this spec is itself full of TNPA examples, so
+the leak risk is the default path, not a hypothetical. **Enforced, not just stated:**
+a test scans every prompt template against a denylist of TNPA-specific strings (port
+names, the §3.2/§3.8/§3.9 section numbers, cited rate values) and fails the build if
+any appear. The seeded-error evaluation (3) additionally must not tell the verifier
+which errors were seeded, directly or through prompt structure.
+
 1. **Extraction accuracy on TNPA.** Run the pipeline on the TNPA PDF. Score the
    proposal cell by cell against the existing hand-verified YAML, the gold standard.
    Per charge and overall. Also score Map's tagging directly: §3.2 must be tagged
    towage, pilotage and berthing.
 2. **Baseline comparison.** Implement a naive baseline: the whole document plus one
-   extraction call per charge, no map, no assemble, no verifier. Score it the same
-   way. The structure has to earn its place over this.
+   extraction call per charge, no map, no assemble, no verifier — but the same
+   Validate node and the same repair budget as the full pipeline. Score it the same
+   way. This gives a clean three-way comparison — baseline, spine (stage 2), spine
+   plus verifier (stage 4) — where each step isolates exactly one contribution:
+   Map/Assemble structure, then the verifier. Without the shared Validate node and
+   budget, a score difference would conflate "the pipeline structure helps" with
+   "having any validation helps."
 3. **Verifier catch rate.** Take the gold TNPA config, inject known errors, and give
    each mutated version to the verifier as if it were a proposal. Seed at least: a
    rate shifted into the wrong port column; a surcharge removed; a band boundary
@@ -413,12 +442,20 @@ All results go in the docs.
 - Package `extraction/` beside `tariffs/`. Imports the schema, loader and
   validators from `tariffs`; duplicates nothing.
 - Dependencies in an optional extra: `pip install -e .[extraction]`.
+- Map issues one LLM call per page window; run these under a **configurable
+  concurrency limit** (default e.g. 5), not unbounded parallel calls.
 - Tests for the pipeline must not require network access or API keys: mock model
   calls with recorded responses.
 - `docs/extraction.md` covers: the scope contract, the human-gate rationale with the
   §3.8 example, the design principle, the outcomes and statuses, the architecture,
-  evaluation results, and known limitations (system errors abort the run;
-  the future compositional representation).
+  evaluation results, known limitations (system errors abort the run; the future
+  compositional representation), and **typical run cost** — call count,
+  approximate $ and wall-clock time for a TNPA-sized book.
+- `docs/extraction.md` also states the Map window-size default was chosen as a
+  reasonable balance, not tuned. Future work: evaluate Map at several window sizes
+  — including a single whole-document window, 10-page and 2-page windows — scoring
+  the resulting inventory on TNPA (known charge sections, modifiers,
+  cross-references, and the §3.2 tagging), and set the default from the results.
 
 ---
 
@@ -445,11 +482,12 @@ Stop after each for review.
 **Specified — do not deviate:** the design principle, scope contract, outcomes and
 statuses, stage structure and closed enums, node roles and outputs, the invariant,
 hard vs warning checks, routing rules, retry budgets, verifier independence and
-objective, system-error handling, evaluation method, build order.
+objective, system-error handling, evaluation method, build order, the Map
+window-size default.
 
-**Left to your judgment:** PDF and table extraction library, window size and
-overlap, prompt wording, tool implementations, state class details, report format,
-file layout inside `extraction/`, test organisation, how model calls are mocked.
+**Left to your judgment:** PDF and table extraction library, prompt wording, tool
+implementations, state class details, report format, file layout inside
+`extraction/`, test organisation, how model calls are mocked.
 
 **Reviewed by Jafar:** the rule representation change (stage 1), and every
 evaluation number.
