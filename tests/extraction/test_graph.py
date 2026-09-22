@@ -275,6 +275,74 @@ def test_rejection_at_human_approval_is_recorded():
     assert resumed["report"] is not None  # kept, per §6.1 node 9: "reject -> stop, keep the report"
 
 
+def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_different_charges_verify_repair():
+    """Regression test for a real bug: node_extract used to treat
+    verify-repairs and validate-repairs as mutually exclusive per call.
+    If charge A had a pending verifier challenge while charge B was
+    separately invalid, only A got fixed; the graph routed back for B's
+    sake, and A's stale (not-yet-rechecked) verify result kept looking
+    like a pending challenge every single time — re-extracting A over
+    and over with nothing to ever stop it, since A's verify_rounds only
+    advances inside node_verify, which never runs again until every
+    charge clears validation. Confirmed live: this hit LangGraph's
+    recursion limit (10,000+ steps) after 14 minutes on the real PDF."""
+    light_dues_attempts = {"n": 0}
+    vts_attempts = {"n": 0}
+    vts_verify_attempts = {"n": 0}
+
+    def respond(schema, messages):
+        schema_name = schema.__name__
+        user_text = messages[-1].content
+        if schema_name == "ProvisionalIdentity":
+            return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
+        if schema_name == "WindowMapResult":
+            return _map_respond(user_text)
+        if schema_name == "ChargeExtraction":
+            if "Canonical charge type to extract: vts" in user_text:
+                vts_attempts["n"] += 1
+                return _good_vts_rule()
+            if "Canonical charge type to extract: light_dues" in user_text:
+                light_dues_attempts["n"] += 1
+                if light_dues_attempts["n"] <= 2:  # invalid for the first 2 attempts — 2 validate-repair rounds
+                    return ChargeExtraction(
+                        charge=CanonicalCharge.LIGHT_DUES,
+                        outcome=SemanticOutcome.MAPPED,
+                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    )
+                return ChargeExtraction(
+                    charge=CanonicalCharge.LIGHT_DUES,
+                    outcome=SemanticOutcome.MAPPED,
+                    proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                )
+            return ChargeExtraction(charge=CanonicalCharge.PORT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+        if schema_name == "VerifierResult":
+            if "Canonical charge type under review: vts" in user_text:
+                vts_verify_attempts["n"] += 1
+                if vts_verify_attempts["n"] == 1:
+                    return VerifierResult(
+                        charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="wrong minimum", pages=[2])]
+                    )
+                return VerifierResult(charge=CanonicalCharge.VTS, findings=[])
+            return VerifierResult(charge=CanonicalCharge.PORT_DUES, findings=[])
+        raise AssertionError(f"unexpected schema {schema_name}")
+
+    llm = StubChatModel(respond)
+    _, result, _ = _run(llm, "thread-concurrent-repairs")
+
+    # The regression: without the fix, vts_attempts balloons well past 2
+    # (re-extracted on every one of light_dues's repair rounds too).
+    assert vts_attempts["n"] == 2
+    assert vts_verify_attempts["n"] == 2
+    assert light_dues_attempts["n"] == 3
+
+    report = result["report"]
+    vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
+    light_dues_entry = next(e for e in report.charges if e.charge is CanonicalCharge.LIGHT_DUES)
+    assert vts_entry.status is None and vts_entry.verify_rounds == 1
+    assert light_dues_entry.status is None and light_dues_entry.repair_attempts == 2
+    assert report.disagreements == []
+
+
 def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever_reaching_verify():
     verify_was_called = {"called": False}
 

@@ -132,33 +132,43 @@ def node_extract(state: PipelineState, config) -> dict:
         new_extractions = extract_all(contexts, state["page_texts"], llm, concurrency_limit=concurrency_limit)
         return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
 
-    # Priority 1: respond to a verifier challenge (§6.6) — checked first
-    # since a charge only reaches this state after already passing
-    # Validate; there is nothing structural left to fix on it.
+    # Both repair kinds are handled in this same call — not an either/or
+    # priority. Treating them as mutually exclusive caused a real
+    # infinite loop (confirmed live: LangGraph's recursion limit hit
+    # after 14 minutes): if charge A had a pending verifier challenge
+    # and charge B was separately invalid, an either/or design fixes
+    # only A, routes back for B's sake, and re-derives "A still has a
+    # pending challenge" from its stale (not yet rechecked) verify
+    # result every single time — since A's verify_rounds only advances
+    # inside node_verify, which never runs again until every charge
+    # clears validation, A gets re-extracted forever alongside B's
+    # repair attempts with nothing to ever stop it.
     challenges = _pending_verify_challenges(state, config)
-    if challenges:
-        to_repair = {c: contexts[c] for c in challenges}
-        repaired = extract_all(
-            to_repair, state["page_texts"], llm, concurrency_limit=concurrency_limit, verifier_findings_by_charge=challenges
-        )
-        merged = dict(existing)
-        merged.update(repaired)
-        return {"extractions": merged}
 
-    # Priority 2: Validate's structural repair loop (§6.5), unchanged from Stage 2.
     budget = _cfg(config, "repair_budget", REPAIR_BUDGET)
     repair_counts = dict(state.get("repair_counts", {}))
     validations = state.get("validations", {})
-    to_repair = {}
+    validate_repairs: dict[CanonicalCharge, Any] = {}
     issues_by_charge = {}
     for charge, validation in validations.items():
+        if charge in challenges:
+            continue  # being handled as a verifier challenge this round instead
         if not validation.valid and repair_counts.get(charge, 0) < budget:
-            to_repair[charge] = contexts[charge]
+            validate_repairs[charge] = contexts[charge]
             issues_by_charge[charge] = [i for i in validation.issues if i.severity is ValidationSeverity.HARD]
             repair_counts[charge] = repair_counts.get(charge, 0) + 1
 
+    to_repair = {**{c: contexts[c] for c in challenges}, **validate_repairs}
+    if not to_repair:
+        return {}
+
     repaired = extract_all(
-        to_repair, state["page_texts"], llm, concurrency_limit=concurrency_limit, repair_issues_by_charge=issues_by_charge
+        to_repair,
+        state["page_texts"],
+        llm,
+        concurrency_limit=concurrency_limit,
+        repair_issues_by_charge=issues_by_charge,
+        verifier_findings_by_charge=challenges,
     )
     merged = dict(existing)
     merged.update(repaired)
