@@ -19,6 +19,7 @@ interrupt/resume, and an LLM client object is not serialisable.
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Optional, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -71,6 +72,14 @@ class PipelineState(TypedDict, total=False):
 
 def _cfg(config, key, default=None):
     return (config.get("configurable") or {}).get(key, default)
+
+
+def _log(msg: str) -> None:
+    """Diagnostic-only, to stderr with -s: after two live runs (one an
+    actual infinite loop, one still hitting a 50-step recursion limit
+    for a reason two mocked stress tests couldn't reproduce), guessing
+    blind is more expensive than just logging every routing decision."""
+    print(f"[graph] {msg}", file=sys.stderr, flush=True)
 
 
 def node_split(state: PipelineState, config) -> dict:
@@ -129,6 +138,7 @@ def node_extract(state: PipelineState, config) -> dict:
     existing = state.get("extractions", {})
 
     if not existing:
+        _log("extract: first pass, all charges")
         new_extractions = extract_all(contexts, state["page_texts"], llm, concurrency_limit=concurrency_limit)
         return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
 
@@ -159,7 +169,12 @@ def node_extract(state: PipelineState, config) -> dict:
             repair_counts[charge] = repair_counts.get(charge, 0) + 1
 
     to_repair = {**{c: contexts[c] for c in challenges}, **validate_repairs}
+    _log(
+        f"extract: verify-repairs={[c.value for c in challenges]} (rounds so far: {state.get('verify_rounds', {})}) "
+        f"validate-repairs={[c.value for c in validate_repairs]} (repair_counts: {repair_counts})"
+    )
     if not to_repair:
+        _log("extract: nothing to repair, returning empty update")
         return {}
 
     repaired = extract_all(
@@ -176,16 +191,21 @@ def node_extract(state: PipelineState, config) -> dict:
 
 
 def node_validate(state: PipelineState, config) -> dict:
-    return {"validations": validate_all(state["extractions"], state["page_texts"])}
+    validations = validate_all(state["extractions"], state["page_texts"])
+    invalid = [c.value for c, v in validations.items() if not v.valid]
+    _log(f"validate: invalid={invalid}")
+    return {"validations": validations}
 
 
 def route_after_validate(state: PipelineState, config) -> str:
     budget = _cfg(config, "repair_budget", REPAIR_BUDGET)
     repair_counts = state.get("repair_counts", {})
-    needs_repair = any(
-        not validation.valid and repair_counts.get(charge, 0) < budget for charge, validation in state["validations"].items()
-    )
-    return "extract" if needs_repair else "verify"
+    still_repairable = [
+        charge.value for charge, validation in state["validations"].items() if not validation.valid and repair_counts.get(charge, 0) < budget
+    ]
+    decision = "extract" if still_repairable else "verify"
+    _log(f"route_after_validate: still_repairable={still_repairable} -> {decision}")
+    return decision
 
 
 def node_verify(state: PipelineState, config) -> dict:
@@ -220,6 +240,7 @@ def node_verify(state: PipelineState, config) -> dict:
             to_verify.append(charge)
             is_repair_pass[charge] = True
 
+    _log(f"verify: to_verify={[(c.value, 'repair' if is_repair_pass[c] else 'first') for c in to_verify]}")
     if not to_verify:
         return {}
 
@@ -232,6 +253,7 @@ def node_verify(state: PipelineState, config) -> dict:
         if is_repair_pass[charge]:
             verify_rounds[charge] = verify_rounds.get(charge, 0) + 1
 
+    _log(f"verify: results={[(c.value, has_material_finding(r)) for c, r in new_results.items()]} verify_rounds={verify_rounds}")
     return {"verify_results": results, "verify_rounds": verify_rounds}
 
 
@@ -239,10 +261,12 @@ def route_after_verify(state: PipelineState, config) -> str:
     budget = _cfg(config, "verify_budget", VERIFY_BUDGET)
     verify_results = state.get("verify_results", {})
     verify_rounds = state.get("verify_rounds", {})
-    needs_repair = any(
-        has_material_finding(result) and verify_rounds.get(charge, 0) < budget for charge, result in verify_results.items()
-    )
-    return "extract" if needs_repair else "finalize_statuses"
+    still_challengeable = [
+        charge.value for charge, result in verify_results.items() if has_material_finding(result) and verify_rounds.get(charge, 0) < budget
+    ]
+    decision = "extract" if still_challengeable else "finalize_statuses"
+    _log(f"route_after_verify: still_challengeable={still_challengeable} -> {decision}")
+    return decision
 
 
 def node_finalize_statuses(state: PipelineState, config) -> dict:
