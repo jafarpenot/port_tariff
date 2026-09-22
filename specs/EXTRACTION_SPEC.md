@@ -145,6 +145,24 @@ implement them as tariffs.
 Stated future direction, for the docs only: a fuller compositional representation
 (an expression tree over the same closed set of operators). Not now.
 
+**Known limitation, found live, deliberately deferred:** `ProposedRule.pricing_params`
+(the Extract/Verify schemas built on top of this representation, §6.1) is a free
+`dict[str, Any]`, not typed per `pricing_type` — a deliberate Stage 2 tradeoff so the
+strict shape check lives once, at Validate, instead of a second discriminated union.
+Cost, confirmed live: on a real run, pilotage's `base_plus_increment` proposal used
+`base_fee`/`increment_per_unit` instead of the required `base`/`rate` on all three
+of its repair attempts, even though Validate's error message named the exact
+required keys in plain text every time (`"...missing required params ['base',
+'rate']..."`) — the model apparently favoured phrasing closer to the source
+document's own wording over a one-line prose correction. The underlying numbers
+were correct; only the key names were wrong, and the charge exhausted its repair
+budget and landed as `Extraction failed` despite having the right data. A prose
+reminder is not reliable here because nothing at the schema level stops the model
+from inventing a key — only a typed, closed sub-model per `pricing_type` (the
+second-discriminated-union approach this tradeoff avoided) would make the API
+itself reject an unlisted field name, rather than relying on the model reading and
+obeying an error message. Not fixed now; revisit if this recurs.
+
 ---
 
 ## 5. Schedule identity and selection
