@@ -143,8 +143,8 @@ def test_35pct_does_not_apply_past_first_30_days():
         engaged_in_cargo_working=False,
         is_bona_fide_coaster=False,
         is_passenger_vessel=False,
-        arrival=datetime(2024, 1, 1),
-        departure=datetime(2024, 3, 1),  # 60 days
+        arrival=datetime(2024, 5, 1),
+        departure=datetime(2024, 6, 30),  # 60 days
         chargeable_period_days=60.0,
     )
     result = calculate(call)
@@ -158,8 +158,8 @@ def test_60pct_beats_35pct():
     call = _call(
         engaged_in_cargo_working=False,  # would qualify for 35% alone
         call_purpose_bunkers_stores_water_only=True,
-        arrival=datetime(2024, 1, 1, 0, 0),
-        departure=datetime(2024, 1, 2, 12, 0),  # 36h, within 48h
+        arrival=datetime(2024, 5, 1, 0, 0),
+        departure=datetime(2024, 5, 2, 12, 0),  # 36h, within 48h
         chargeable_period_days=1.5,
     )
     result = calculate(call)
@@ -171,8 +171,8 @@ def test_60pct_beats_35pct():
 def test_60pct_requires_stay_under_48h():
     call = _call(
         call_purpose_bunkers_stores_water_only=True,
-        arrival=datetime(2024, 1, 1, 0, 0),
-        departure=datetime(2024, 1, 4, 0, 0),  # 72h, over 48h
+        arrival=datetime(2024, 5, 1, 0, 0),
+        departure=datetime(2024, 5, 4, 0, 0),  # 72h, over 48h
         chargeable_period_days=3.0,
     )
     plain = calculate(_call(chargeable_period_days=3.0)).port_dues.amount
@@ -198,8 +198,8 @@ def test_15pct_stacks_multiplicatively_on_35pct():
     base = calculate(_call(chargeable_period_days=8 / 24)).port_dues.amount
     call = _call(
         engaged_in_cargo_working=False,
-        arrival=datetime(2024, 1, 1, 0, 0),
-        departure=datetime(2024, 1, 1, 8, 0),  # 8h stay: <30 days and <12h
+        arrival=datetime(2024, 5, 1, 0, 0),
+        departure=datetime(2024, 5, 1, 8, 0),  # 8h stay: <30 days and <12h
         chargeable_period_days=8 / 24,
     )
     result = calculate(call).port_dues.amount
@@ -207,7 +207,7 @@ def test_15pct_stacks_multiplicatively_on_35pct():
 
 
 def test_long_stay_surcharge_hits_incremental_component_only():
-    common = dict(arrival=datetime(2024, 1, 1), departure=datetime(2024, 3, 15), chargeable_period_days=74.0)
+    common = dict(arrival=datetime(2024, 5, 1), departure=datetime(2024, 7, 14), chargeable_period_days=74.0)
     plain = calculate(_call(engaged_in_cargo_working=True, **common)).port_dues
     surcharged = calculate(_call(engaged_in_cargo_working=False, **common)).port_dues
 

@@ -73,6 +73,10 @@ def calculate_endpoint(payload: CalculateRequest) -> dict[str, Any]:
             name: {
                 "computed": outcome.computed,
                 "amount": outcome.result.amount if outcome.computed and outcome.result else None,
+                # Genuinely from the selected schedule (specs/EXTRACTION_SPEC.md
+                # §5.2), not a hardcoded "ZAR" — every current schedule happens
+                # to be ZAR, but nothing here assumes that.
+                "currency": outcome.result.currency if outcome.computed and outcome.result else None,
                 "reason": outcome.reason,
                 "note": BERTHING_SERVICES_NOTE if name == "berthing_services" else None,
                 "trace": (

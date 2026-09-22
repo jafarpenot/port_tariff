@@ -27,6 +27,30 @@ Run the test suite in the same image instead of the app:
 ```bash
 docker compose run --rm app pytest
 ```
+Once it's up, the sidebar has a second page, **"Extract a New Tariff"**.
+Upload any port authority's tariff PDF there and a LangGraph pipeline
+(`specs/EXTRACTION_SPEC.md`) reads it: splits it into pages, maps each
+page window with the LLM to find every charge-relevant section,
+extracts a proposed rule per charge, validates its structure, and
+adversarially verifies it — then shows a full review report (naming,
+currency, per-charge outcome, verifier findings, any unresolved
+disagreements) for you to approve or reject. It uses the same
+`ANTHROPIC_API_KEY` set above, makes many real LLM calls per run, and
+takes several minutes and a few dollars for a book the size of TNPA's
+— the page just shows a spinner while it works, no step-by-step
+progress. To watch it run instead, tail the container logs in a second
+terminal: `docker compose logs -f app | grep '\[graph\]'`.
+
+Review only for now: approving does not yet feed the calculator above
+— see `pages/1_Extract_New_Tariff.py`'s docstring and
+`specs/EXTRACTION_SPEC.md` for why.
+
+Pulled new commits? Rebuild the image first — `docker compose up`
+alone reuses whatever image was last built and won't pick up new
+pages or dependencies:
+```bash
+docker compose up --build
+```
 
 **Option B — local**
 ```bash

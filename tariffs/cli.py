@@ -53,9 +53,9 @@ def _print_header(title: str) -> None:
     print("-" * len(title))
 
 
-def _format_tariff_line(label: str, amount: Optional[float], reason: Optional[str]) -> str:
+def _format_tariff_line(label: str, amount: Optional[float], reason: Optional[str], currency: str = "ZAR") -> str:
     if amount is not None:
-        return f"  {label:55s} {amount:>14,.2f} ZAR"
+        return f"  {label:55s} {amount:>14,.2f} {currency}"
     if reason:
         # `reason` already reads "not computable — ..." (built once, at
         # the source, in tariffs/nlp.py) — don't prepend it again here.
@@ -87,7 +87,8 @@ def render_parsed(parsed: Parsed) -> None:
         if outcome is None:
             continue
         amount = outcome.result.amount if outcome.computed and outcome.result else None
-        print(_format_tariff_line(_TARIFF_LABELS[name], amount, outcome.reason))
+        currency = outcome.result.currency if outcome.computed and outcome.result else "ZAR"
+        print(_format_tariff_line(_TARIFF_LABELS[name], amount, outcome.reason, currency))
         if name == "berthing_services":
             print(f"    note: {BERTHING_SERVICES_NOTE}")
 
@@ -141,7 +142,7 @@ def render_calculation_result(call: VesselCall, result: CalculationResult) -> No
     }
     for name in _TARIFF_ORDER:
         tr = by_name[name]
-        print(_format_tariff_line(_TARIFF_LABELS[name], tr.amount, None))
+        print(_format_tariff_line(_TARIFF_LABELS[name], tr.amount, None, tr.currency))
         if name == "berthing_services":
             print(f"    note: {BERTHING_SERVICES_NOTE}")
 

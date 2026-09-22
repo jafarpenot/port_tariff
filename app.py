@@ -69,11 +69,16 @@ if st.button("Calculate", type="primary") and request_text.strip():
             "note": BERTHING_SERVICES_NOTE if name == "berthing_services" else "",
         }
         if outcome.computed and outcome.result is not None:
-            row["amount (ZAR)"] = f"{outcome.result.amount:,.2f}"
+            row["amount"] = f"{outcome.result.amount:,.2f}"
+            # Genuinely from the selected schedule (specs/EXTRACTION_SPEC.md
+            # §5.2) — a column, not baked into the "amount" header, since a
+            # single table's rows aren't guaranteed to share one currency.
+            row["currency"] = outcome.result.currency
         else:
             # outcome.reason already reads "not computable — ..." (built
             # once, at the source, in tariffs/nlp.py).
-            row["amount (ZAR)"] = outcome.reason
+            row["amount"] = outcome.reason
+            row["currency"] = ""
         tariff_rows.append(row)
     st.table(tariff_rows)
 

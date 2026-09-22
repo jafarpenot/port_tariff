@@ -13,33 +13,25 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from .registry import all_registered_ports
+from .rules import RoundingSpec
 
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+#
+# RoundingMode moved to tariffs.rules (extraction pipeline spec §4): it's
+# now part of the generalised rule vocabulary shared with the schedule
+# schema, not a models-only concept. Import it from tariffs.rules.
 
 
-class RoundingMode(str, Enum):
-    """SPEC.md §5.2. An unknown string fails at config load time, not at
-    calculation runtime."""
-
-    EXACT = "exact"  # use GT as-is (VTS)
-    CEIL_PER_100_T = "ceil_per_100_t"  # ceil(GT/100) (everything else)
-    PRO_RATA_TIME = "pro_rata_time"  # fractional days, no rounding (port dues)
-
-
-class Port(str, Enum):
-    """The eight commercial ports (SPEC.md §8.1). Values match the port keys
-    used in config/tariffs_2024_2025.yaml."""
-
-    RICHARDS_BAY = "richards_bay"
-    DURBAN = "durban"
-    EAST_LONDON = "east_london"
-    NGQURA = "ngqura"
-    PORT_ELIZABETH = "port_elizabeth"
-    MOSSEL_BAY = "mossel_bay"
-    CAPE_TOWN = "cape_town"
-    SALDANHA = "saldanha"
+# Built from schedules/registry.yaml (specs/EXTRACTION_SPEC.md §5.2), not
+# hardcoded — a new registry entry with a new port becomes a valid `Port`
+# member without touching this file. Today's registry has one entry (TNPA)
+# covering the same eight ports this was previously a static list of, so
+# this produces the identical enum shape — verified in
+# tests/test_registry.py, which would fail loudly if that ever drifted.
+Port = Enum("Port", {name.upper(): name for name in all_registered_ports()}, type=str)
 
 
 class VesselType(str, Enum):
@@ -178,7 +170,7 @@ class TraceStep(BaseModel):
     page: int
     description: str
     inputs: dict[str, Any] = Field(default_factory=dict)
-    rounding: Optional[RoundingMode] = None
+    rounding: Optional[RoundingSpec] = None
     modifier: Optional[str] = None
     modifier_resolution: Optional[str] = None
     subtotal: Optional[float] = None
@@ -242,7 +234,7 @@ class CalculationResult(BaseModel):
                         "page": step.page,
                         "description": step.description,
                         "inputs": step.inputs,
-                        "rounding": step.rounding.value if step.rounding else None,
+                        "rounding": step.rounding.mode.value if step.rounding else None,
                         "modifier": step.modifier,
                         "modifier_resolution": step.modifier_resolution,
                         "subtotal": step.subtotal,

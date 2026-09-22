@@ -11,20 +11,26 @@ from pathlib import Path
 from . import calculators as calc
 from . import modifiers as mod
 from .models import CalculationResult, VesselCall
-from .schedule import DEFAULT_SCHEDULE_PATH, TariffSchedule, load_schedule
+from .registry import schedule_path_for
+from .schedule import TariffSchedule, load_schedule
 
-_schedule_cache: TariffSchedule | None = None
+_schedule_cache: dict[str, TariffSchedule] = {}
 
 
-def _get_schedule(schedule: TariffSchedule | None, schedule_path: str | Path | None) -> TariffSchedule:
+def _get_schedule(call: VesselCall, schedule: TariffSchedule | None, schedule_path: str | Path | None) -> TariffSchedule:
     if schedule is not None:
         return schedule
     if schedule_path is not None:
         return load_schedule(schedule_path)
-    global _schedule_cache
-    if _schedule_cache is None:
-        _schedule_cache = load_schedule(DEFAULT_SCHEDULE_PATH)
-    return _schedule_cache
+    # Selected by port and arrival date via schedules/registry.yaml
+    # (specs/EXTRACTION_SPEC.md §5.2) — not a single fixed default file.
+    # No date stated -> match on port alone, same tri-state "not stated"
+    # policy SPEC.md §8.2 already applies to every other optional field.
+    on_date = call.arrival.date() if call.arrival else None
+    path = str(schedule_path_for(call.port.value, on_date))
+    if path not in _schedule_cache:
+        _schedule_cache[path] = load_schedule(path)
+    return _schedule_cache[path]
 
 
 def calculate(
@@ -36,10 +42,11 @@ def calculate(
 
     `schedule` lets a caller (e.g. a test) inject an already-loaded
     TariffSchedule; `schedule_path` lets a caller point at a different YAML
-    file. With neither, the packaged default config is loaded once and
-    cached for the life of the process.
+    file. With neither, the schedule is selected via schedules/registry.yaml
+    by `call.port` and `call.arrival` (§5.2) and cached per resolved file
+    for the life of the process.
     """
-    sched = _get_schedule(schedule, schedule_path)
+    sched = _get_schedule(call, schedule, schedule_path)
     return CalculationResult(
         vessel_call=call,
         light_dues=mod.apply_to_light_dues(calc.light_dues(call, sched), call, sched),

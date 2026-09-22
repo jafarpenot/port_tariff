@@ -56,12 +56,17 @@ from pydantic import BaseModel, Field, create_model
 
 from . import calculators, modifiers
 from .models import TariffResult, VesselCall
+from .registry import all_registered_ports
 from .schedule import TariffSchedule, load_schedule
 from .shapes import RateNotPublished
 
-_SUPPORTED_PORTS_TEXT = (
-    "Richards Bay, Durban, East London, Ngqura, Port Elizabeth, Mossel Bay, Cape Town, or Saldanha"
-)
+# Derived from schedules/registry.yaml (specs/EXTRACTION_SPEC.md §5.2), not a
+# second hardcoded list — a new registry entry with a new port is immediately
+# reflected here too. `slug.replace("_", " ").title()` round-trips every
+# current port name correctly (e.g. "port_elizabeth" -> "Port Elizabeth");
+# verified for all eight in tests/test_nlp_parser.py.
+_SUPPORTED_PORT_NAMES = [p.replace("_", " ").title() for p in all_registered_ports()]
+_SUPPORTED_PORTS_TEXT = ", ".join(_SUPPORTED_PORT_NAMES[:-1]) + f", or {_SUPPORTED_PORT_NAMES[-1]}"
 
 _SYSTEM_PROMPT = f"""\
 You extract a structured vessel port-call record from a free-text request. \
@@ -391,9 +396,13 @@ def parse_vessel_request(
 
     unrecognized_port = getattr(extraction, "unrecognized_port", None)
     if unrecognized_port:
+        # "No approved schedule covers this port" (specs/EXTRACTION_SPEC.md
+        # §5.2) rather than a fixed-count claim — the boundary is whatever
+        # schedules/registry.yaml currently approves, not a number baked
+        # into this sentence.
         return Rejected(
             reason=(
-                f"'{unrecognized_port}' is not one of the eight ports this tool covers: "
+                f"'{unrecognized_port}' has no approved schedule in this tool — it currently covers: "
                 f"{_SUPPORTED_PORTS_TEXT}."
             ),
             parsed_so_far=trace,
