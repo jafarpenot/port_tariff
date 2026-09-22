@@ -408,6 +408,57 @@ def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_an
     assert port_dues_entry.status is None and port_dues_entry.repair_attempts == 2
 
 
+def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not_loop_forever():
+    """Regression test for the real infinite loop, confirmed live (hit
+    LangGraph's recursion limit twice, once at the 10,000-step default
+    and once at a 50-step safety net): a charge gets a material verify
+    finding, its repair response is itself structurally invalid, and it
+    never becomes valid again before exhausting its *validate* budget —
+    landing as Extraction failed, never getting a chance to be
+    re-verified. route_after_verify used to check only verify_results,
+    so this charge's stale material finding (verify_rounds stuck at 0,
+    since that only advances on an actual re-verify, which requires
+    validity) satisfied "still challengeable" forever — routing back to
+    "extract" for a charge node_extract correctly refuses to touch
+    (it checks validity), forever, doing nothing each cycle."""
+
+    def respond(schema, messages):
+        schema_name = schema.__name__
+        user_text = messages[-1].content
+        if schema_name == "ProvisionalIdentity":
+            return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
+        if schema_name == "WindowMapResult":
+            return _map_respond(user_text)
+        if schema_name == "ChargeExtraction":
+            if "Canonical charge type to extract: vts" in user_text:
+                # Valid on the first pass; broken forever after (any
+                # verify-repair or validate-repair response is invalid).
+                is_repair = "adversarial reviewer" in user_text or "failed validation" in user_text
+                basis = "displacement" if is_repair else "gross_tonnage"
+                return ChargeExtraction(
+                    charge=CanonicalCharge.VTS,
+                    outcome=SemanticOutcome.MAPPED,
+                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    provenance_pages=[2],
+                )
+            return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+        if schema_name == "VerifierResult":
+            if "Canonical charge type under review: vts" in user_text:
+                return VerifierResult(charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="vts issue", pages=[2])])
+            return VerifierResult(charge=CanonicalCharge.LIGHT_DUES, findings=[])
+        raise AssertionError(f"unexpected schema {schema_name}")
+
+    llm = StubChatModel(respond)
+    graph = build_graph()
+    config = {"configurable": {"thread_id": "thread-breaks-forever", "llm": llm, "repair_budget": REPAIR_BUDGET, "verify_budget": VERIFY_BUDGET}, "recursion_limit": 25}
+    result = graph.invoke({"pdf_path": "unused", "page_texts": PAGE_TEXTS}, config=config)
+
+    report = result["report"]
+    vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
+    assert vts_entry.status is PipelineStatus.EXTRACTION_FAILED
+    assert vts_entry.repair_attempts == REPAIR_BUDGET
+
+
 def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever_reaching_verify():
     verify_was_called = {"called": False}
 

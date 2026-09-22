@@ -288,11 +288,29 @@ def node_verify(state: PipelineState, config) -> dict:
 
 
 def route_after_verify(state: PipelineState, config) -> str:
+    """The real infinite loop, confirmed live: this used to check
+    `verify_results` alone. A charge that gets a material finding, then
+    breaks structurally on its repair attempt and permanently exhausts
+    its *validate* budget (-> Extraction failed) never gets a chance to
+    be re-verified — verify_rounds for it stays 0 forever, since that
+    only advances inside node_verify, which requires the charge to be
+    valid. Its stale material finding then satisfies
+    `verify_rounds < budget` forever, so this kept saying "extract" for
+    a charge node_extract correctly refuses to touch (it checks
+    validity) — an infinite loop of no-op ticks, confirmed hitting
+    LangGraph's recursion limit live. Must check validity here too, same
+    as node_extract's _pending_verify_challenges."""
     budget = _cfg(config, "verify_budget", VERIFY_BUDGET)
+    validations = state.get("validations", {})
     verify_results = state.get("verify_results", {})
     verify_rounds = state.get("verify_rounds", {})
     still_challengeable = [
-        charge.value for charge, result in verify_results.items() if has_material_finding(result) and verify_rounds.get(charge, 0) < budget
+        charge.value
+        for charge, result in verify_results.items()
+        if has_material_finding(result)
+        and verify_rounds.get(charge, 0) < budget
+        and validations.get(charge) is not None
+        and validations[charge].valid
     ]
     decision = "extract" if still_challengeable else "finalize_statuses"
     _log(f"route_after_verify: still_challengeable={still_challengeable} -> {decision}")
