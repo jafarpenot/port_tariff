@@ -65,6 +65,7 @@ class PipelineState(TypedDict, total=False):
     repair_counts: dict[CanonicalCharge, int]
     verify_results: dict[CanonicalCharge, VerifierResult]
     verify_rounds: dict[CanonicalCharge, int]
+    verify_pending_repair: dict[CanonicalCharge, bool]
     disagreements: list[Disagreement]
     report: ReviewReport
     approved: Optional[bool]
@@ -112,17 +113,33 @@ def node_assemble(state: PipelineState, config) -> dict:
 
 def _pending_verify_challenges(state: PipelineState, config) -> dict[CanonicalCharge, list]:
     """Charges with an unresolved material finding, still structurally
-    valid, still under the verify-repair budget — i.e. due another trip
-    through Extract in response to Verify's challenge, not Validate's."""
+    valid, still under the verify-repair budget, AND not yet acted on —
+    i.e. genuinely due a trip through Extract in response to Verify's
+    challenge, not Validate's.
+
+    That last condition (`verify_pending_repair`) matters: without it, a
+    charge already repaired once for a challenge keeps looking
+    "pending" — has_material_finding(prior) is still true and
+    verify_rounds hasn't advanced yet, since verify_rounds only
+    increments inside node_verify, which won't run again until every
+    charge clears validation — so if any OTHER charge needs several more
+    validate-repair rounds, this charge gets needlessly re-extracted on
+    every single one of them while it should just be waiting for its
+    next real verify pass. Confirmed live: this is what inflated a
+    ~16-20 tick run into something hitting a 50-tick safety limit — not
+    a true infinite loop (every stress test converged), just a lot of
+    wasted, redundant re-extraction while slower charges caught up.
+    """
     budget = _cfg(config, "verify_budget", VERIFY_BUDGET)
     validations = state.get("validations", {})
     verify_results = state.get("verify_results", {})
     verify_rounds = state.get("verify_rounds", {})
+    pending_repair = state.get("verify_pending_repair", {})
     pending = {}
     for charge, result in verify_results.items():
         validation = validations.get(charge)
         if (
-            has_material_finding(result)
+            pending_repair.get(charge, False)
             and verify_rounds.get(charge, 0) < budget
             and validation is not None
             and validation.valid
@@ -187,7 +204,13 @@ def node_extract(state: PipelineState, config) -> dict:
     )
     merged = dict(existing)
     merged.update(repaired)
-    return {"extractions": merged, "repair_counts": repair_counts}
+    # Clear the challenge flag the moment it's acted on — the charge now
+    # waits for its next real verify pass instead of looking "still
+    # pending" to every subsequent extract call until then.
+    pending_repair = dict(state.get("verify_pending_repair", {}))
+    for charge in challenges:
+        pending_repair[charge] = False
+    return {"extractions": merged, "repair_counts": repair_counts, "verify_pending_repair": pending_repair}
 
 
 def node_validate(state: PipelineState, config) -> dict:
@@ -253,8 +276,15 @@ def node_verify(state: PipelineState, config) -> dict:
         if is_repair_pass[charge]:
             verify_rounds[charge] = verify_rounds.get(charge, 0) + 1
 
+    # Freshly set per this actual check — this is what node_extract's
+    # _pending_verify_challenges reads to tell "genuinely due a repair"
+    # from "already repaired, just waiting for its next real recheck".
+    pending_repair = dict(state.get("verify_pending_repair", {}))
+    for charge, result in new_results.items():
+        pending_repair[charge] = has_material_finding(result)
+
     _log(f"verify: results={[(c.value, has_material_finding(r)) for c, r in new_results.items()]} verify_rounds={verify_rounds}")
-    return {"verify_results": results, "verify_rounds": verify_rounds}
+    return {"verify_results": results, "verify_rounds": verify_rounds, "verify_pending_repair": pending_repair}
 
 
 def route_after_verify(state: PipelineState, config) -> str:

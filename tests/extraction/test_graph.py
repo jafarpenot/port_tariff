@@ -343,6 +343,71 @@ def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_
     assert report.disagreements == []
 
 
+def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_another_charge_is_still_validate_repairing():
+    """Regression test for a real bug found watching a live run: two
+    charges (light_dues, port_dues, pilotage, berthing_services in the
+    real run) got material verify findings in the same round. One of
+    them repaired cleanly on the first try; the others' repair response
+    was itself structurally invalid, needing further validate-repair
+    rounds. The already-repaired charge kept getting swept back into
+    "pending verify challenges" and re-extracted on every one of the
+    other charges' validate-repair rounds — not infinite (bounded by the
+    slower charge's budget), but real, redundant, wasted work that
+    inflated a run from ~16-20 expected ticks to hitting a 50-tick
+    safety limit. Fixed with a verify_pending_repair flag that's cleared
+    the moment a challenge is acted on, and only set again by Verify's
+    own next real check."""
+    vts_extract_attempts = {"n": 0}
+    port_dues_extract_attempts = {"n": 0}
+
+    def respond(schema, messages):
+        schema_name = schema.__name__
+        user_text = messages[-1].content
+        if schema_name == "ProvisionalIdentity":
+            return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
+        if schema_name == "WindowMapResult":
+            return _map_respond(user_text)
+        if schema_name == "ChargeExtraction":
+            if "Canonical charge type to extract: vts" in user_text:
+                vts_extract_attempts["n"] += 1
+                return _good_vts_rule()
+            if "Canonical charge type to extract: port_dues" in user_text:
+                port_dues_extract_attempts["n"] += 1
+                n = port_dues_extract_attempts["n"]
+                # attempt 1: valid. attempt 2 (verify-repair): invalid.
+                # attempts 3-4 (validate-repair): invalid, then valid.
+                basis = "gross_tonnage" if n in (1, 4) else "displacement"
+                return ChargeExtraction(
+                    charge=CanonicalCharge.PORT_DUES,
+                    outcome=SemanticOutcome.MAPPED,
+                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    provenance_pages=[2],
+                )
+            return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+        if schema_name == "VerifierResult":
+            if "Canonical charge type under review: vts" in user_text:
+                # Material on the first check only; clean forever after.
+                return VerifierResult(charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="vts issue", pages=[2])])
+            if "Canonical charge type under review: port_dues" in user_text:
+                return VerifierResult(charge=CanonicalCharge.PORT_DUES, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="port_dues issue", pages=[2])])
+            return VerifierResult(charge=CanonicalCharge.LIGHT_DUES, findings=[])
+        raise AssertionError(f"unexpected schema {schema_name}")
+
+    llm = StubChatModel(respond)
+    _, result, _ = _run(llm, "thread-no-redundant-re-extraction")
+
+    # The regression: without the fix, vts keeps getting re-extracted
+    # (once per port_dues validate-repair round) well past 2.
+    assert vts_extract_attempts["n"] == 2
+    assert port_dues_extract_attempts["n"] == 4
+
+    report = result["report"]
+    vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
+    port_dues_entry = next(e for e in report.charges if e.charge is CanonicalCharge.PORT_DUES)
+    assert vts_entry.status is None
+    assert port_dues_entry.status is None and port_dues_entry.repair_attempts == 2
+
+
 def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever_reaching_verify():
     verify_was_called = {"called": False}
 
