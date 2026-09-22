@@ -66,9 +66,23 @@ def match_port_key(label: str) -> str | None:
     return None
 
 
+_EXCLUSION_MARKERS = ["excluding", "except", "other than"]
+
+
+def _is_exclusion_label(normalized_label: str) -> bool:
+    """"All ports excluding Durban and Saldanha Bay" (the book's own
+    phrasing for VTS) is functionally an 'Other' catch-all — but it
+    literally contains the word "Durban", so a naive word-boundary check
+    wrongly treats it as *naming* Durban rather than excluding it. Found
+    live: this made every VTS cell score as a miss even though the
+    extraction was fully correct (Durban's own real 0.65 entry existed
+    right alongside it — this label just won the match first)."""
+    return any(marker in normalized_label for marker in _EXCLUSION_MARKERS)
+
+
 def is_other_label(label: str) -> bool:
     normalized = _normalize(label)
-    return any(other in normalized for other in _OTHER_LABELS)
+    return any(other in normalized for other in _OTHER_LABELS) or _is_exclusion_label(normalized)
 
 
 def _label_names_port(label: str, port: Port) -> bool:
@@ -79,8 +93,14 @@ def _label_names_port(label: str, port: Port) -> bool:
     them, silently losing the other back to the Other/Other Ports
     fallback (found immediately after fixing the 'pe' alias bug above:
     Ngqura won the tie-break every time, and Port Elizabeth's real value
-    disappeared)."""
+    disappeared).
+
+    An exclusion-phrased label (see _is_exclusion_label) never counts as
+    directly naming a port, even when that port's name literally appears
+    in it — it's a catch-all, handled by is_other_label instead."""
     normalized = _normalize(label)
+    if _is_exclusion_label(normalized):
+        return False
     return any(_word_boundary_match(alias, normalized) for alias in _PORT_ALIASES[port.value])
 
 

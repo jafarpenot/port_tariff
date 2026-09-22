@@ -7,7 +7,14 @@ a flat band. Both are pure logic, no LLM involved.
 from tariffs.models import Port
 from tariffs.schedule import load_schedule
 
-from extraction.evaluate import _band_field_matches, _find_matching_band, match_port_key, resolve_rule_for_port, score_towage
+from extraction.evaluate import (
+    _band_field_matches,
+    _find_matching_band,
+    match_port_key,
+    resolve_rule_for_port,
+    score_towage,
+    score_vts,
+)
 from extraction.schemas import CanonicalCharge, ChargeReportEntry, ProposedRule, SemanticOutcome
 
 GOLD = load_schedule()
@@ -71,6 +78,42 @@ def test_combined_column_label_resolves_correctly_for_both_ports_it_names():
     per_port_rules = {"Port Elizabeth / Ngqura": combined, "Other": other}
     assert resolve_rule_for_port(Port.PORT_ELIZABETH, per_port_rules) is combined
     assert resolve_rule_for_port(Port.NGQURA, per_port_rules) is combined
+
+
+def _rate_rule(rate):
+    return ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": rate}, multiplicity="per_call")
+
+
+def test_exclusion_phrased_label_does_not_hijack_the_named_port_it_excludes():
+    """Real data from a live run: the book's own VTS phrasing is "0.54 at
+    all ports excluding Durban and Saldanha Bay; 0.65 at Durban and
+    Saldanha Bay" — the model extracted this faithfully, but the
+    exclusion label literally contains the word "Durban", so it used to
+    win the match before ever reaching Durban's own entry."""
+    per_port_rules = {
+        "All ports excluding Durban and Saldanha Bay": _rate_rule(0.54),
+        "Durban": _rate_rule(0.65),
+        "Saldanha Bay": _rate_rule(0.65),
+    }
+    assert resolve_rule_for_port(Port.DURBAN, per_port_rules).pricing_params["rate"] == 0.65
+    assert resolve_rule_for_port(Port.SALDANHA, per_port_rules).pricing_params["rate"] == 0.65
+    for port in [Port.RICHARDS_BAY, Port.EAST_LONDON, Port.NGQURA, Port.PORT_ELIZABETH, Port.MOSSEL_BAY, Port.CAPE_TOWN]:
+        assert resolve_rule_for_port(port, per_port_rules).pricing_params["rate"] == 0.54
+
+
+def test_score_vts_real_live_data_scores_100_percent_once_exclusion_label_is_handled():
+    entry = ChargeReportEntry(
+        charge=CanonicalCharge.VTS,
+        outcome=SemanticOutcome.MAPPED,
+        varies_by_port=True,
+        per_port_rules={
+            "All ports excluding Durban and Saldanha Bay": _rate_rule(0.54),
+            "Durban": _rate_rule(0.65),
+            "Saldanha Bay": _rate_rule(0.65),
+        },
+    )
+    score = score_vts(entry, GOLD)
+    assert score.matched == score.total == 8
 
 
 def test_score_towage_perfect_durban_proposal_scores_100_percent_with_reordered_and_zeroed_bands():
