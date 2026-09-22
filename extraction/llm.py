@@ -6,7 +6,7 @@ tests must not require network access or an API key).
 
 from __future__ import annotations
 
-from typing import Any, Type, TypeVar
+from typing import Any, Optional, Type, TypeVar
 
 from pydantic import BaseModel
 
@@ -18,12 +18,19 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 120  # ChatAnthropic's own default is None —
 T = TypeVar("T", bound=BaseModel)
 
 
-def default_llm(model: str = DEFAULT_MODEL, timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> Any:
+def default_llm(model: str = DEFAULT_MODEL, timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS, api_key: Optional[str] = None) -> Any:
     from langchain_anthropic import ChatAnthropic
 
     # No `temperature` argument: newer Claude models (e.g. claude-sonnet-5)
     # reject it outright — see tariffs/nlp.py's _default_llm for the same note.
-    return ChatAnthropic(model=model, timeout=timeout)
+    # `api_key` is only passed through when given explicitly (e.g. a
+    # visitor's own key in the extraction UI) — omitting the kwarg entirely
+    # when None preserves ChatAnthropic's own default of reading
+    # ANTHROPIC_API_KEY from the environment.
+    kwargs: dict[str, Any] = {"model": model, "timeout": timeout}
+    if api_key:
+        kwargs["api_key"] = api_key
+    return ChatAnthropic(**kwargs)
 
 
 MAX_STRUCTURED_CALL_ATTEMPTS = 3

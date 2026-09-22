@@ -14,7 +14,10 @@ WORKDIR /app
 RUN pip install --no-cache-dir --upgrade pip
 
 COPY . .
-RUN pip install --no-cache-dir -e .
+# `[extraction]` is needed at runtime now too: app.py's "Extract New
+# Tariff" page (pages/1_Extract_New_Tariff.py) runs the extraction
+# pipeline, not just the calculator.
+RUN pip install --no-cache-dir -e ".[extraction]"
 
 EXPOSE 8501
 
