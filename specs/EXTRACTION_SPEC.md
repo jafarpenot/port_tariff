@@ -456,6 +456,20 @@ which errors were seeded, directly or through prompt structure.
    show naming reconciliation, a different currency, a new-schedule rather than a
    diff, and correct handling of not-present, bundled and unmapped charges.
 
+**Scoping decision on dates, stated before the demo, not found after:** §5.2's
+registry selection is genuinely by port *and* date (built and tested in stage 5 —
+a call dated outside a schedule's `effective_from`/`effective_to` window is
+correctly rejected). The generalisation demo book is very likely an *older* or
+otherwise differently-dated edition than TNPA's 2024/2025 one, and there is no
+plan to re-run it against an updated version of the same book later. Given that,
+the demo's vessel-call dates are not expected to be constructed to realistically
+align with whatever validity window the second book's own extraction proposes —
+date-based *selection* stays built and already covered by
+`tests/test_registry.py`, but is explicitly out of scope for what the demo itself
+is asked to prove. What the demo must still show is extraction correctness on a
+different book (naming, currency, new-vs-diff, the four outcomes) — not a second,
+independent proof that date-windowed selection works, which stage 5 already gave.
+
 ---
 
 ## 9. Packaging and docs
