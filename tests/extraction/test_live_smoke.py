@@ -1,4 +1,4 @@
-"""Live smoke tests — skipped unless ANTHROPIC_API_KEY is set, same
+"""Live smoke tests — skipped unless OPENAI_API_KEY is set, same
 pattern as tests/test_nlp_parser.py's live tests. Cheap and small on
 purpose: this checks the real API actually works with these schemas
 (structured output on nested Pydantic models, bind_tools) before
@@ -16,7 +16,7 @@ from extraction.pdf import split_pdf
 from extraction.schemas import CanonicalCharge, ChargeExtraction, ProposedRule, SemanticOutcome, has_material_finding
 from extraction.verify import verify_charge
 
-pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires a real ANTHROPIC_API_KEY")
+pytestmark = pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="requires a real OPENAI_API_KEY")
 
 PDF_PATH = "Port Tariff.pdf"
 

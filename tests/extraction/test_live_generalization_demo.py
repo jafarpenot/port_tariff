@@ -2,7 +2,7 @@
 full pipeline (Extract + Validate + Verify) against a real, different
 authority's tariff book and prints the review report: naming
 reconciliation, currency, new-schedule vs. diff, and the four semantic
-outcomes. Skipped unless ANTHROPIC_API_KEY is set.
+outcomes. Skipped unless OPENAI_API_KEY is set.
 """
 
 import os
@@ -12,7 +12,7 @@ import pytest
 from extraction.graph import build_graph
 from extraction.llm import default_llm
 
-pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires a real ANTHROPIC_API_KEY")
+pytestmark = pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="requires a real OPENAI_API_KEY")
 
 PDF_PATH = "new_tariff_pdf/RAK-Ports-Tariff-2026.pdf"
 

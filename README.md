@@ -19,7 +19,8 @@ and `GET /health` in §9.
 
 **Option A — Docker (recommended, to run it yourself)**
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # or put it in a local .env file
+export ANTHROPIC_API_KEY=sk-ant-...   # calculator — or put both in a local .env file
+export OPENAI_API_KEY=sk-...          # extraction page (GPT-6 Luna, not Claude — see below)
 docker compose up
 # open http://localhost:8501
 ```
@@ -34,10 +35,15 @@ page window with the LLM to find every charge-relevant section,
 extracts a proposed rule per charge, validates its structure, and
 adversarially verifies it — then shows a full review report (naming,
 currency, per-charge outcome, verifier findings, any unresolved
-disagreements) for you to approve or reject. It uses the same
-`ANTHROPIC_API_KEY` set above, makes many real LLM calls per run, and
-takes several minutes and a few dollars for a book the size of TNPA's
-— the page just shows a spinner while it works, no step-by-step
+disagreements) for you to approve or reject. It runs on `OPENAI_API_KEY`
+(OpenAI's GPT-6 Luna), not the calculator's `ANTHROPIC_API_KEY` — a
+deliberate, extraction-only cost choice (~20x cheaper per token than
+Claude Sonnet 5), made and swapped in after the calculator and the
+rest of the extraction pipeline were already built and evaluated
+against Claude; results on this specific model haven't been through
+the same live evaluation yet. Makes many real LLM calls per run and
+takes several minutes and well under a dollar for a book the size of
+TNPA's — the page just shows a spinner while it works, no step-by-step
 progress. To watch it run instead, tail the container logs in a second
 terminal: `docker compose logs -f app | grep '\[graph\]'`.
 

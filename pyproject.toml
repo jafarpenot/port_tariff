@@ -29,6 +29,10 @@ dependencies = [
 extraction = [
     "langgraph>=0.2",
     "pdfplumber>=0.11",
+    # extraction/llm.py's default_llm() uses OpenAI's GPT-6 Luna, not
+    # Anthropic — a deliberate, extraction-only cost choice; the
+    # calculator (tariffs/nlp.py) stays on langchain-anthropic.
+    "langchain-openai>=0.2",
 ]
 
 [dependency-groups]

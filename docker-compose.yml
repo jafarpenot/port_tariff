@@ -7,6 +7,9 @@ services:
       # Read from the host shell or a local .env file (docker compose
       # loads .env automatically) — never baked into the image.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # The extraction page (pages/1_Extract_New_Tariff.py) runs on
+      # OpenAI's GPT-6 Luna, not Anthropic — a separate key.
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
 
   api:
     build: .

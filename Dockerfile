@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir -e ".[extraction]"
 
 EXPOSE 8501
 
-# ANTHROPIC_API_KEY is read from the environment at runtime (docker-compose.yml
-# passes it through) — never baked into this image, never committed.
+# ANTHROPIC_API_KEY (calculator) and OPENAI_API_KEY (extraction) are both
+# read from the environment at runtime (docker-compose.yml passes them
+# through) — never baked into this image, never committed.
 CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]

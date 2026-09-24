@@ -9,8 +9,10 @@ extraction pipeline's basis/pricing_type/pricing_params vocabulary. A
 generic, pricing-type-driven calculation engine is future work.
 
 Needs the `extraction` optional dependency group: pip install -e .[extraction]
-Needs ANTHROPIC_API_KEY set in the environment, same as app.py — README
-tells whoever deploys this to set their own key.
+Needs OPENAI_API_KEY set in the environment — extraction/llm.py's
+default_llm() runs on OpenAI's GPT-6 Luna, not Anthropic, a deliberate
+extraction-only cost choice. The calculator page above is unaffected
+and still needs its own ANTHROPIC_API_KEY.
 """
 
 import os
@@ -41,8 +43,8 @@ except ImportError:
     )
     st.stop()
 
-if not os.environ.get("ANTHROPIC_API_KEY"):
-    st.error("ANTHROPIC_API_KEY is not set in this environment. Set it and restart the app.")
+if not os.environ.get("OPENAI_API_KEY"):
+    st.error("OPENAI_API_KEY is not set in this environment. Set it and restart the app.")
     st.stop()
 
 

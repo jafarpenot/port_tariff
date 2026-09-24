@@ -1,6 +1,6 @@
 """specs/EXTRACTION_SPEC.md §8 eval 3 — the verifier's seeded-error
 catch rate, against the real Verify LLM. Skipped unless
-ANTHROPIC_API_KEY is set.
+OPENAI_API_KEY is set.
 """
 
 import os
@@ -11,7 +11,7 @@ from extraction.llm import default_llm
 from extraction.pdf import split_pdf
 from extraction.seeded_errors import run_seeded_error_eval
 
-pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires a real ANTHROPIC_API_KEY")
+pytestmark = pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="requires a real OPENAI_API_KEY")
 
 
 def test_live_seeded_error_catch_rate():

@@ -10,20 +10,22 @@ from typing import Any, Type, TypeVar
 
 from pydantic import BaseModel
 
-DEFAULT_MODEL = "claude-sonnet-5"
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 120  # ChatAnthropic's own default is None — unbounded — and a
-# stalled connection (observed live: a seeded-error eval run sat on one open TCP connection for
-# 58 minutes doing nothing) then hangs forever instead of failing loudly.
+DEFAULT_MODEL = "gpt-6-luna"  # OpenAI, not Anthropic — a deliberate, extraction-only cost
+# choice (~20x cheaper per token than Claude Sonnet 5); the calculator's own LLM calls
+# (tariffs/nlp.py) are unaffected and stay on langchain-anthropic. Needs OPENAI_API_KEY,
+# not ANTHROPIC_API_KEY, in the environment.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120  # ChatOpenAI's own default is None — unbounded — and a
+# stalled connection (observed live on the Anthropic client this replaced: a seeded-error
+# eval run sat on one open TCP connection for 58 minutes doing nothing) then hangs forever
+# instead of failing loudly.
 
 T = TypeVar("T", bound=BaseModel)
 
 
 def default_llm(model: str = DEFAULT_MODEL, timeout: float = DEFAULT_REQUEST_TIMEOUT_SECONDS) -> Any:
-    from langchain_anthropic import ChatAnthropic
+    from langchain_openai import ChatOpenAI
 
-    # No `temperature` argument: newer Claude models (e.g. claude-sonnet-5)
-    # reject it outright — see tariffs/nlp.py's _default_llm for the same note.
-    return ChatAnthropic(model=model, timeout=timeout)
+    return ChatOpenAI(model=model, timeout=timeout)
 
 
 MAX_STRUCTURED_CALL_ATTEMPTS = 3

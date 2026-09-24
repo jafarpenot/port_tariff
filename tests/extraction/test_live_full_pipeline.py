@@ -3,7 +3,7 @@ Runs the full pipeline against the real Port Tariff.pdf and scores it
 cell by cell against the existing hand-verified gold YAML. Real
 Anthropic API calls: identity (1) + Map (7 windows) + Extract (6
 charges, possibly with repair rounds) — skipped unless
-ANTHROPIC_API_KEY is set, same pattern as every other live test here.
+OPENAI_API_KEY is set, same pattern as every other live test here.
 """
 
 import os
@@ -14,7 +14,7 @@ from extraction.evaluate import print_score_report, score_report
 from extraction.graph import build_graph
 from extraction.llm import default_llm
 
-pytestmark = pytest.mark.skipif(not os.environ.get("ANTHROPIC_API_KEY"), reason="requires a real ANTHROPIC_API_KEY")
+pytestmark = pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="requires a real OPENAI_API_KEY")
 
 
 def test_live_full_pipeline_accuracy_on_tnpa():
