@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from .schemas import ReviewReport
+from .schemas import CanonicalCharge, ReviewReport, ValidationResult
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "eval_runs" / "auto"
 
@@ -43,6 +43,8 @@ def write_run_log(
     llm: Any,
     thread_id: Optional[str] = None,
     started_at: Optional[float] = None,
+    graph_trace: Optional[list[str]] = None,
+    validation_history: Optional[dict[CanonicalCharge, list[ValidationResult]]] = None,
 ) -> Optional[Path]:
     model = _model_id(llm)
     if model == "unknown":
@@ -80,6 +82,14 @@ def write_run_log(
         status = entry.status.value if entry.status else "-"
         lines.append(f"### {entry.charge.value} — outcome={outcome} status={status}")
         lines.append(f"repair_attempts={entry.repair_attempts} verify_rounds={entry.verify_rounds}")
+        history = (validation_history or {}).get(entry.charge, [])
+        if len(history) > 1:  # only worth showing when something actually changed across attempts
+            lines.append("- validation history:")
+            for i, result in enumerate(history, start=1):
+                verdict = "valid" if result.valid else "invalid"
+                lines.append(f"  - attempt {i}: {verdict}")
+                for issue in result.issues:
+                    lines.append(f"    - ({issue.severity.value}) {issue.message}")
         if entry.included_in:
             lines.append(f"- included_in: {entry.included_in.value}")
         if entry.unmapped_source_text:
@@ -100,6 +110,17 @@ def write_run_log(
             lines.append(f"- **{d.charge.value}**: {d.verifier_concern}")
     else:
         lines.append("(none)")
+    lines.append("")
+
+    lines.append("## Graph trace")
+    lines.append("The full sequence of routing decisions this run made — every repair round, every")
+    lines.append("Validate/Verify pass, in order, same as the `[graph]` stderr lines during a live run.")
+    if graph_trace:
+        lines.append("```")
+        lines.extend(graph_trace)
+        lines.append("```")
+    else:
+        lines.append("(none captured)")
     lines.append("")
 
     identity_bit = report.identity.authority or "unknown-authority"

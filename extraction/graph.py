@@ -20,6 +20,7 @@ interrupt/resume, and an LLM client object is not serialisable.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from typing import Any, Optional, TypedDict
 
@@ -64,6 +65,7 @@ class PipelineState(TypedDict, total=False):
     assemble_result: AssembleResult
     extractions: dict[CanonicalCharge, ChargeExtraction]
     validations: dict[CanonicalCharge, ValidationResult]
+    validation_history: dict[CanonicalCharge, list[ValidationResult]]
     pipeline_statuses: dict[CanonicalCharge, PipelineStatus]
     repair_counts: dict[CanonicalCharge, int]
     verify_results: dict[CanonicalCharge, VerifierResult]
@@ -78,12 +80,35 @@ def _cfg(config, key, default=None):
     return (config.get("configurable") or {}).get(key, default)
 
 
-def _log(msg: str) -> None:
-    """Diagnostic-only, to stderr with -s: after two live runs (one an
-    actual infinite loop, one still hitting a 50-step recursion limit
-    for a reason two mocked stress tests couldn't reproduce), guessing
-    blind is more expensive than just logging every routing decision."""
+_graph_trace_lock = threading.Lock()
+_graph_traces: dict[str, list[str]] = {}  # thread_id -> accumulated [graph] lines this run
+
+
+def _log(config, msg: str) -> None:
+    """To stderr with -s (after two live runs — one an actual infinite
+    loop, one still hitting a 50-step recursion limit for a reason two
+    mocked stress tests couldn't reproduce — guessing blind is more
+    expensive than logging every routing decision), and buffered per
+    thread_id so node_report/run_log.py can persist the full sequence,
+    not just the final snapshot. Keyed by thread_id, not a plain
+    module-level list: node_extract/verify's own parallelism is
+    multiple OS threads within one run, and a long-lived Streamlit
+    process can have more than one run's graph.invoke() in flight at
+    once — a single shared list would interleave and corrupt both."""
     print(f"[graph] {msg}", file=sys.stderr, flush=True)
+    thread_id = _cfg(config, "thread_id")
+    if thread_id is None:
+        return
+    with _graph_trace_lock:
+        _graph_traces.setdefault(thread_id, []).append(msg)
+
+
+def _pop_graph_trace(config) -> list[str]:
+    thread_id = _cfg(config, "thread_id")
+    if thread_id is None:
+        return []
+    with _graph_trace_lock:
+        return _graph_traces.pop(thread_id, [])
 
 
 def node_split(state: PipelineState, config) -> dict:
@@ -162,7 +187,7 @@ def node_extract(state: PipelineState, config) -> dict:
     existing = state.get("extractions", {})
 
     if not existing:
-        _log("extract: first pass, all charges")
+        _log(config, "extract: first pass, all charges")
         new_extractions = extract_all(contexts, state["page_texts"], llm, concurrency_limit=concurrency_limit)
         return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
 
@@ -194,11 +219,12 @@ def node_extract(state: PipelineState, config) -> dict:
 
     to_repair = {**{c: contexts[c] for c in challenges}, **validate_repairs}
     _log(
+        config,
         f"extract: verify-repairs={[c.value for c in challenges]} (rounds so far: {state.get('verify_rounds', {})}) "
         f"validate-repairs={[c.value for c in validate_repairs]} (repair_counts: {repair_counts})"
     )
     if not to_repair:
-        _log("extract: nothing to repair, returning empty update")
+        _log(config, "extract: nothing to repair, returning empty update")
         return {}
 
     repaired = extract_all(
@@ -223,8 +249,15 @@ def node_extract(state: PipelineState, config) -> dict:
 def node_validate(state: PipelineState, config) -> dict:
     validations = validate_all(state["extractions"], state["page_texts"])
     invalid = [c.value for c, v in validations.items() if not v.valid]
-    _log(f"validate: invalid={invalid}")
-    return {"validations": validations}
+    _log(config, f"validate: invalid={invalid}")
+    # Full per-attempt history, not just the latest result — `validations`
+    # itself gets replaced wholesale each time this node runs (LangGraph's
+    # default merge is replace-by-key), so without this, what was wrong on
+    # attempt 1 vs. attempt 2 is silently lost the moment a repair happens.
+    history = {c: list(v) for c, v in state.get("validation_history", {}).items()}
+    for charge, result in validations.items():
+        history.setdefault(charge, []).append(result)
+    return {"validations": validations, "validation_history": history}
 
 
 def route_after_validate(state: PipelineState, config) -> str:
@@ -234,7 +267,7 @@ def route_after_validate(state: PipelineState, config) -> str:
         charge.value for charge, validation in state["validations"].items() if not validation.valid and repair_counts.get(charge, 0) < budget
     ]
     decision = "extract" if still_repairable else "verify"
-    _log(f"route_after_validate: still_repairable={still_repairable} -> {decision}")
+    _log(config, f"route_after_validate: still_repairable={still_repairable} -> {decision}")
     return decision
 
 
@@ -270,7 +303,7 @@ def node_verify(state: PipelineState, config) -> dict:
             to_verify.append(charge)
             is_repair_pass[charge] = True
 
-    _log(f"verify: to_verify={[(c.value, 'repair' if is_repair_pass[c] else 'first') for c in to_verify]}")
+    _log(config, f"verify: to_verify={[(c.value, 'repair' if is_repair_pass[c] else 'first') for c in to_verify]}")
     if not to_verify:
         return {}
 
@@ -290,7 +323,7 @@ def node_verify(state: PipelineState, config) -> dict:
     for charge, result in new_results.items():
         pending_repair[charge] = has_material_finding(result)
 
-    _log(f"verify: results={[(c.value, has_material_finding(r)) for c, r in new_results.items()]} verify_rounds={verify_rounds}")
+    _log(config, f"verify: results={[(c.value, has_material_finding(r)) for c, r in new_results.items()]} verify_rounds={verify_rounds}")
     return {"verify_results": results, "verify_rounds": verify_rounds, "verify_pending_repair": pending_repair}
 
 
@@ -320,7 +353,7 @@ def route_after_verify(state: PipelineState, config) -> str:
         and validations[charge].valid
     ]
     decision = "extract" if still_challengeable else "finalize_statuses"
-    _log(f"route_after_verify: still_challengeable={still_challengeable} -> {decision}")
+    _log(config, f"route_after_verify: still_challengeable={still_challengeable} -> {decision}")
     return decision
 
 
@@ -383,6 +416,8 @@ def node_report(state: PipelineState, config) -> dict:
             llm=_cfg(config, "llm"),
             thread_id=_cfg(config, "thread_id"),
             started_at=state.get("run_started_at"),
+            graph_trace=_pop_graph_trace(config),
+            validation_history=state.get("validation_history", {}),
         )
     except OSError:
         pass  # a log write failing must never fail the pipeline itself
