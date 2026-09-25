@@ -30,16 +30,23 @@ def default_llm(model: str = DEFAULT_MODEL, timeout: float = DEFAULT_REQUEST_TIM
 
 
 MAX_STRUCTURED_CALL_ATTEMPTS = 3
-MAX_RATE_LIMIT_RETRIES = 3
-RATE_LIMIT_BACKOFF_SECONDS = 15  # doubles each retry: 15s, 30s, 60s
+MAX_TRANSIENT_ERROR_RETRIES = 3
+TRANSIENT_ERROR_BACKOFF_SECONDS = 15  # doubles each retry: 15s, 30s, 60s
 
 
-def _is_rate_limit_error(exc: Exception) -> bool:
-    """Provider-agnostic by design: both openai's and anthropic's SDKs
+def _is_transient_error(exc: Exception) -> bool:
+    """Provider-agnostic by design, two different ways for two different
+    error shapes. A 429 rate limit: both openai's and anthropic's SDKs
     set `status_code` on their own API error classes — checked by
-    attribute, not by importing either SDK's specific exception type
-    here (extraction/llm.py stays provider-agnostic everywhere else)."""
-    return getattr(exc, "status_code", None) == 429
+    attribute, not either SDK's specific exception type. A timeout:
+    found live (a 28-minute run died on one call that outlasted
+    DEFAULT_REQUEST_TIMEOUT_SECONDS) — this never got an HTTP response
+    at all, so it has no status_code; langchain_core.exceptions.
+    ModelTimeoutError is the taxonomy both providers' wrappers use for
+    exactly this, so checking that stays provider-agnostic too."""
+    from langchain_core.exceptions import ModelTimeoutError
+
+    return getattr(exc, "status_code", None) == 429 or isinstance(exc, ModelTimeoutError)
 
 
 def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: str) -> T:
@@ -56,11 +63,13 @@ def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: 
     loop. A stub LLM's `respond` callable is invoked once per attempt if
     it keeps failing, same as a real flaky model would be re-asked.
 
-    Also retries, with exponential backoff, on a 429 rate-limit response
-    (observed live on GPT-6 Luna: several charges extracting in parallel
-    burst past the account's tokens-per-minute limit) — a separate
-    budget from `MAX_STRUCTURED_CALL_ATTEMPTS`, since waiting out a rate
-    limit isn't a schema-validation attempt and shouldn't consume one.
+    Also retries, with exponential backoff, on a transient error — a 429
+    rate limit (several charges extracting in parallel burst past the
+    account's tokens-per-minute limit) or a request timeout (one call
+    outlasted DEFAULT_REQUEST_TIMEOUT_SECONDS and killed a 28-minute run
+    outright) — a separate budget from `MAX_STRUCTURED_CALL_ATTEMPTS`,
+    since waiting out either isn't a schema-validation attempt and
+    shouldn't consume one.
     """
     from langchain_core.messages import HumanMessage, SystemMessage
     from pydantic import ValidationError
@@ -81,7 +90,7 @@ def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: 
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
 
     last_error: Exception | None = None
-    rate_limit_retries = 0
+    transient_retries = 0
     attempts = 0
     while attempts < MAX_STRUCTURED_CALL_ATTEMPTS:
         try:
@@ -90,8 +99,8 @@ def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: 
             last_error = exc
             attempts += 1
         except Exception as exc:
-            if not _is_rate_limit_error(exc) or rate_limit_retries >= MAX_RATE_LIMIT_RETRIES:
+            if not _is_transient_error(exc) or transient_retries >= MAX_TRANSIENT_ERROR_RETRIES:
                 raise
-            rate_limit_retries += 1
-            time.sleep(RATE_LIMIT_BACKOFF_SECONDS * (2 ** (rate_limit_retries - 1)))
+            transient_retries += 1
+            time.sleep(TRANSIENT_ERROR_BACKOFF_SECONDS * (2 ** (transient_retries - 1)))
     raise last_error

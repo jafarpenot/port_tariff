@@ -1,20 +1,22 @@
-"""Node 8's companion: writes one detailed markdown file per pipeline
-run to eval_runs/auto/ — regardless of what invoked the graph (pytest,
-the Streamlit page, an ad-hoc script). Complements tests/conftest.py's
-pytest-only bare-facts trace, which never sees a non-pytest run at all.
+"""Writes one markdown file per pipeline run to eval_runs/auto/, live —
+appended to as the run progresses, not held in memory and only flushed
+by node_report. That matters: a run that crashes mid-pipeline (a real
+timeout killed a 28-minute TNPA run outright) used to leave nothing
+behind but a bare pass/fail line; now everything up to the crash is
+already on disk. Covers every run regardless of what invoked the graph
+(pytest, the Streamlit page, an ad-hoc script) — complements
+tests/conftest.py's pytest-only bare-facts trace.
 
-Covers every run that reaches node_report — the same rich content this
-session's hand-written eval_runs/*.md entries were built from, no
-longer requiring someone to notice a run was worth writing up. Does
-NOT cover a run that crashes before reaching the report (a raw
-exception in Extract/Verify propagates straight up through
-graph.invoke() and node_report never runs) — a known gap, not
-attempted here.
+The path is deterministic from (thread_id, run_started_at) — every
+node can compute it independently without threading a Path through
+state, which would need PipelineState/checkpointer changes for
+something that's really just a side effect.
 """
 
 from __future__ import annotations
 
 import re
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -22,6 +24,7 @@ from typing import Any, Optional
 from .schemas import CanonicalCharge, ReviewReport, ValidationResult
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "eval_runs" / "auto"
+_write_lock = threading.Lock()
 
 
 def _model_id(llm: Any) -> str:
@@ -36,51 +39,84 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "run"
 
 
-def write_run_log(
+def run_log_path(*, thread_id: Optional[str], run_started_at: Optional[float], llm: Any) -> Optional[Path]:
+    """None whenever there's nothing sensible to log to: a mocked/stub
+    LLM (tests/extraction/conftest.py's StubChatModel exposes neither
+    `model_name` nor `model` — the signal this is a test run, not a
+    real one, so the ~250 mocked pytest runs every `pytest` invocation
+    makes never touch this tracked, committed folder), or missing
+    thread_id/run_started_at (nothing to key a stable path on)."""
+    if _model_id(llm) == "unknown" or not thread_id or not run_started_at:
+        return None
+    stamp = datetime.fromtimestamp(run_started_at, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return _LOG_DIR / f"{stamp}_{_slug(thread_id)}.md"
+
+
+def start_run(path: Optional[Path], *, pdf_path: str, llm: Any, thread_id: Optional[str]) -> None:
+    """Idempotent — safe to call on every node, only the first call (per
+    path) actually creates the file."""
+    if path is None or path.exists():
+        return
+    with _write_lock:
+        if path.exists():
+            return
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        header = (
+            f"# Extraction run — {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n\n"
+            f"**PDF:** {pdf_path}\n"
+            f"**Model:** {_model_id(llm)}\n"
+            f"**Thread ID:** {thread_id or '(none given)'}\n\n"
+            "Written live as the run progresses, not just at the end — if this file "
+            "stops mid-trace with no \"Final report\" section below, the run crashed or "
+            "is still in progress; everything above the cutoff genuinely happened.\n\n"
+            "## Live trace\n```\n"
+        )
+        path.write_text(header, encoding="utf-8")
+
+
+def append_trace(path: Optional[Path], msg: str) -> None:
+    if path is None:
+        return
+    with _write_lock:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
+
+def finish_run(
+    path: Optional[Path],
     report: ReviewReport,
     *,
-    pdf_path: str,
-    llm: Any,
-    thread_id: Optional[str] = None,
     started_at: Optional[float] = None,
-    graph_trace: Optional[list[str]] = None,
     validation_history: Optional[dict[CanonicalCharge, list[ValidationResult]]] = None,
-) -> Optional[Path]:
-    model = _model_id(llm)
-    if model == "unknown":
-        return None  # a mocked/stub LLM (tests/extraction/conftest.py's StubChatModel)
-        # has neither attribute a real ChatOpenAI/ChatAnthropic exposes — treated as the
-        # signal this is a test run, not a real one, so the dozens of mocked pytest runs
-        # every `pytest` invocation makes don't spam this tracked, committed folder.
+) -> None:
+    """Appends the polished final summary to the same live file — only
+    reached on a successful run (node_report). A crashed run simply
+    ends at whatever the live trace had captured up to that point."""
+    if path is None:
+        return
 
     now = datetime.now(timezone.utc)
     duration = f"{now.timestamp() - started_at:.1f}s" if started_at else "unknown"
 
-    lines: list[str] = []
-    lines.append(f"# Extraction run — {now.isoformat(timespec='seconds')}")
-    lines.append("")
-    lines.append(f"**PDF:** {pdf_path}")
-    lines.append(f"**Model:** {_model_id(llm)}")
-    lines.append(f"**Thread ID:** {thread_id or '(none given)'}")
-    lines.append(f"**Duration:** {duration}")
-    lines.append("")
+    lines: list[str] = ["```\n"]  # closes the "## Live trace" fence opened by start_run
+    lines.append(f"\n## Final report — duration {duration}\n")
 
-    lines.append("## Identity")
+    lines.append("### Identity")
     lines.append(f"```\n{report.identity.model_dump()}\n```")
     lines.append(f"is_new_edition={report.is_new_edition} matched_existing_authority={report.matched_existing_authority}")
     lines.append("")
 
-    lines.append("## Coverage")
+    lines.append("### Coverage")
     lines.append(f"- pages_read: {report.coverage_pages_read}/{report.coverage_total_pages}")
     lines.append(f"- general_terms_found: {report.general_terms_found}")
     lines.append(f"- out_of_scope_sections: {len(report.out_of_scope_sections)}")
     lines.append("")
 
-    lines.append("## Charges")
+    lines.append("### Charges")
     for entry in report.charges:
         outcome = entry.outcome.value if entry.outcome else "?"
         status = entry.status.value if entry.status else "-"
-        lines.append(f"### {entry.charge.value} — outcome={outcome} status={status}")
+        lines.append(f"#### {entry.charge.value} — outcome={outcome} status={status}")
         lines.append(f"repair_attempts={entry.repair_attempts} verify_rounds={entry.verify_rounds}")
         history = (validation_history or {}).get(entry.charge, [])
         if len(history) > 1:  # only worth showing when something actually changed across attempts
@@ -104,7 +140,7 @@ def write_run_log(
             lines.append(f"- ({f.severity.value}) {f.problem}")
         lines.append("")
 
-    lines.append("## Disagreements")
+    lines.append("### Disagreements")
     if report.disagreements:
         for d in report.disagreements:
             lines.append(f"- **{d.charge.value}**: {d.verifier_concern}")
@@ -112,20 +148,6 @@ def write_run_log(
         lines.append("(none)")
     lines.append("")
 
-    lines.append("## Graph trace")
-    lines.append("The full sequence of routing decisions this run made — every repair round, every")
-    lines.append("Validate/Verify pass, in order, same as the `[graph]` stderr lines during a live run.")
-    if graph_trace:
-        lines.append("```")
-        lines.extend(graph_trace)
-        lines.append("```")
-    else:
-        lines.append("(none captured)")
-    lines.append("")
-
-    identity_bit = report.identity.authority or "unknown-authority"
-    filename = f"{now.strftime('%Y%m%dT%H%M%SZ')}_{_slug(identity_bit)}.md"
-    _LOG_DIR.mkdir(parents=True, exist_ok=True)
-    path = _LOG_DIR / filename
-    path.write_text("\n".join(lines), encoding="utf-8")
-    return path
+    with _write_lock:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(lines))

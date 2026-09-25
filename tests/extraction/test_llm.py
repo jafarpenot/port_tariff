@@ -1,12 +1,15 @@
-"""extraction/llm.py's structured_call(): the rate-limit retry-with-backoff
-added after a live 429 on GPT-6 Luna. No real API calls — a stub LLM
-raises a fake 429-shaped exception, and time.sleep is monkeypatched so
-the test doesn't actually wait out the backoff.
+"""extraction/llm.py's structured_call(): the transient-error
+retry-with-backoff added after a live 429 on GPT-6 Luna (rate limit)
+and a live 28-minute run killed by a single request timeout. No real
+API calls — a stub LLM raises a fake error of each shape, and
+time.sleep is monkeypatched so the test doesn't actually wait out the
+backoff.
 """
 
+from langchain_core.exceptions import ModelTimeoutError
 from pydantic import BaseModel
 
-from extraction.llm import MAX_RATE_LIMIT_RETRIES, structured_call
+from extraction.llm import MAX_TRANSIENT_ERROR_RETRIES, structured_call
 
 
 class _Answer(BaseModel):
@@ -19,6 +22,12 @@ class _FakeRateLimitError(Exception):
     provider-agnostic on purpose, no real SDK exception imported here."""
 
     status_code = 429
+
+
+class _FakeTimeoutError(ModelTimeoutError):
+    """Mirrors langchain_openai's/langchain_anthropic's own timeout
+    errors: no status_code at all (no HTTP response was ever received),
+    just langchain_core's own provider-agnostic taxonomy."""
 
 
 class _StubStructuredLLM:
@@ -55,6 +64,24 @@ def test_retries_after_a_rate_limit_error_and_then_succeeds(monkeypatch):
     assert sleeps == [15]  # first backoff
 
 
+def test_retries_after_a_timeout_error_and_then_succeeds(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr("extraction.llm.time.sleep", lambda seconds: sleeps.append(seconds))
+
+    calls = {"n": 0}
+
+    def respond():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _FakeTimeoutError()
+        return _Answer(value=7)
+
+    result = structured_call(_StubLLM(respond), _Answer, "system", "user")
+    assert result.value == 7
+    assert calls["n"] == 2
+    assert sleeps == [15]
+
+
 def test_backoff_doubles_on_each_retry(monkeypatch):
     sleeps = []
     monkeypatch.setattr("extraction.llm.time.sleep", lambda seconds: sleeps.append(seconds))
@@ -66,10 +93,10 @@ def test_backoff_doubles_on_each_retry(monkeypatch):
         structured_call(_StubLLM(respond), _Answer, "system", "user")
     except _FakeRateLimitError:
         pass
-    assert sleeps == [15, 30, 60][:MAX_RATE_LIMIT_RETRIES]
+    assert sleeps == [15, 30, 60][:MAX_TRANSIENT_ERROR_RETRIES]
 
 
-def test_rate_limit_retries_are_exhausted_and_then_the_error_propagates(monkeypatch):
+def test_transient_error_retries_are_exhausted_and_then_the_error_propagates(monkeypatch):
     monkeypatch.setattr("extraction.llm.time.sleep", lambda seconds: None)
 
     def respond():
@@ -82,9 +109,9 @@ def test_rate_limit_retries_are_exhausted_and_then_the_error_propagates(monkeypa
         pass
 
 
-def test_a_non_rate_limit_error_propagates_immediately_no_retry():
+def test_a_non_transient_error_propagates_immediately_no_retry():
     def respond():
-        raise RuntimeError("not a rate limit")
+        raise RuntimeError("not a rate limit or timeout")
 
     try:
         structured_call(_StubLLM(respond), _Answer, "system", "user")
