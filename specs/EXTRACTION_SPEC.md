@@ -145,23 +145,29 @@ implement them as tariffs.
 Stated future direction, for the docs only: a fuller compositional representation
 (an expression tree over the same closed set of operators). Not now.
 
-**Known limitation, found live, deliberately deferred:** `ProposedRule.pricing_params`
-(the Extract/Verify schemas built on top of this representation, §6.1) is a free
-`dict[str, Any]`, not typed per `pricing_type` — a deliberate Stage 2 tradeoff so the
-strict shape check lives once, at Validate, instead of a second discriminated union.
-Cost, confirmed live: on a real run, pilotage's `base_plus_increment` proposal used
-`base_fee`/`increment_per_unit` instead of the required `base`/`rate` on all three
-of its repair attempts, even though Validate's error message named the exact
-required keys in plain text every time (`"...missing required params ['base',
-'rate']..."`) — the model apparently favoured phrasing closer to the source
-document's own wording over a one-line prose correction. The underlying numbers
-were correct; only the key names were wrong, and the charge exhausted its repair
-budget and landed as `Extraction failed` despite having the right data. A prose
-reminder is not reliable here because nothing at the schema level stops the model
-from inventing a key — only a typed, closed sub-model per `pricing_type` (the
-second-discriminated-union approach this tradeoff avoided) would make the API
-itself reject an unlisted field name, rather than relying on the model reading and
-obeying an error message. Not fixed now; revisit if this recurs.
+**Known limitation, found live, since fixed:** `ProposedRule.pricing_params` was a
+free `dict[str, Any]`, not typed per `pricing_type` — a deliberate Stage 2 tradeoff
+so the strict shape check lived once, at Validate, instead of a second
+discriminated union. Cost, confirmed live: on a real run, pilotage's
+`base_plus_increment` proposal used `base_fee`/`increment_per_unit` instead of the
+required `base`/`rate` on all three of its repair attempts, even though Validate's
+error message named the exact required keys in plain text every time
+(`"...missing required params ['base', 'rate']..."`) — the model apparently
+favoured phrasing closer to the source document's own wording over a one-line
+prose correction. The underlying numbers were correct; only the key names were
+wrong, and the charge exhausted its repair budget and landed as `Extraction
+failed` despite having the right data. A prose reminder wasn't reliable because
+nothing at the schema level stopped the model from inventing a key. It recurred
+independently on a second book (RAK Ports: `port_dues`, `berthing_services`), and
+separately became a hard blocker, not just a soft quality risk, when extraction
+was pointed at GPT-6 Luna instead of Claude: OpenAI's default strict
+structured-output mode rejects any free dict outright (every object must set
+`additionalProperties: false`, which a free dict cannot). Fixed by
+`extraction/schemas.py`'s `PricingShapes` — one typed, closed sub-model per
+`pricing_type`, deliberately not a discriminated union (a plain object with fixed
+fields is more portable across providers than a `oneOf`/discriminator, which has
+its own provider-specific rough edges), with a model validator enforcing exactly
+one shape selected and fully populated at construction time.
 
 ---
 
