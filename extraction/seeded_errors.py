@@ -20,7 +20,17 @@ from typing import Any, Callable
 
 from tariffs.schedule import load_schedule
 
-from .schemas import CanonicalCharge, ChargeExtraction, ProposedRule, SemanticOutcome, has_material_finding
+from .schemas import (
+    BandedShape,
+    BasePlusIncrementShape,
+    CanonicalCharge,
+    ChargeExtraction,
+    PerUnitShape,
+    PricingShapes,
+    ProposedRule,
+    SemanticOutcome,
+    has_material_finding,
+)
 from .verify import verify_charge
 
 
@@ -40,7 +50,11 @@ def _rate_shifted_to_wrong_port_column() -> ChargeExtraction:
     for port, rate_cfg in gold.vts.ports.items():
         rate = gold.vts.ports["cape_town"].rate_per_gt if port == "durban" else rate_cfg.rate_per_gt
         per_port[port] = ProposedRule(
-            basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": rate}, multiplicity="per_call", minimum=gold.vts.minimum_fee
+            basis="gross_tonnage",
+            rounding_mode="exact",
+            pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=rate)),
+            multiplicity="per_call",
+            minimum=gold.vts.minimum_fee,
         )
     return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED, varies_by_port=True, per_port_rules=per_port, provenance_sections=["2.1.1"], provenance_pages=[6])
 
@@ -57,7 +71,13 @@ def _surcharge_removed() -> ChargeExtraction:
             {"min_exclusive": b.min_gt_exclusive, "max_inclusive": b.max_gt_inclusive, "base": b.base, "increment_above": b.increment_above_gt, "per_unit_rate": b.per_100t}
             for b in port_bands.bands
         ]
-        per_port[port] = ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", rounding_unit=100, pricing_type="banded", pricing_params={"bands": bands}, multiplicity="per_service")
+        per_port[port] = ProposedRule(
+            basis="gross_tonnage",
+            rounding_mode="ceil_to_unit",
+            rounding_unit=100,
+            pricing=PricingShapes(banded=BandedShape(selected=True, bands=bands)),
+            multiplicity="per_service",
+        )
     return ChargeExtraction(charge=CanonicalCharge.TOWAGE, outcome=SemanticOutcome.MAPPED, varies_by_port=True, per_port_rules=per_port, provenance_sections=["3.6"], provenance_pages=[15])
 
 
@@ -75,7 +95,13 @@ def _band_boundary_moved() -> ChargeExtraction:
             elif port == "durban" and i == 2:  # band [10000, 50000] -> [9000, 50000]
                 min_exclusive, increment_above = 9000.0, 9000.0
             bands.append({"min_exclusive": min_exclusive, "max_inclusive": max_inclusive, "base": b.base, "increment_above": increment_above, "per_unit_rate": b.per_100t})
-        per_port[port] = ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", rounding_unit=100, pricing_type="banded", pricing_params={"bands": bands}, multiplicity="per_service")
+        per_port[port] = ProposedRule(
+            basis="gross_tonnage",
+            rounding_mode="ceil_to_unit",
+            rounding_unit=100,
+            pricing=PricingShapes(banded=BandedShape(selected=True, bands=bands)),
+            multiplicity="per_service",
+        )
     return ChargeExtraction(charge=CanonicalCharge.TOWAGE, outcome=SemanticOutcome.MAPPED, varies_by_port=True, per_port_rules=per_port, provenance_sections=["3.6"], provenance_pages=[15])
 
 
@@ -85,7 +111,13 @@ def _marine_services_incentive_dropped() -> ChargeExtraction:
     explicitly discounts pilotage."""
     gold = load_schedule()
     rate_cfg = gold.pilotage.ports["durban"]
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", rounding_unit=100, pricing_type="base_plus_increment", pricing_params={"base": rate_cfg.base_fee, "rate": rate_cfg.per_100t}, multiplicity="per_service")
+    rule = ProposedRule(
+        basis="gross_tonnage",
+        rounding_mode="ceil_to_unit",
+        rounding_unit=100,
+        pricing=PricingShapes(base_plus_increment=BasePlusIncrementShape(selected=True, base=rate_cfg.base_fee, rate=rate_cfg.per_100t)),
+        multiplicity="per_service",
+    )
     return ChargeExtraction(charge=CanonicalCharge.PILOTAGE, outcome=SemanticOutcome.MAPPED, varies_by_port=False, proposed_rule=rule, provenance_sections=["3.3"], provenance_pages=[13])
 
 

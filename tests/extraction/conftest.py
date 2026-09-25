@@ -46,7 +46,10 @@ class StubChatModel:
         self._respond = respond
         self._tool_respond = tool_respond or (lambda tools, messages: _NoToolCalls())
 
-    def with_structured_output(self, schema):
+    def with_structured_output(self, schema, **kwargs):
+        # **kwargs (e.g. `method=`) accepted and ignored, matching real
+        # providers' signatures — extraction/llm.py's structured_call()
+        # passes method="function_calling" explicitly.
         return _StubStructuredLLM(self._respond, schema)
 
     def bind_tools(self, tools):

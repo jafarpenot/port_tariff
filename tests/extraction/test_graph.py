@@ -12,7 +12,9 @@ from extraction.graph import REPAIR_BUDGET, VERIFY_BUDGET, build_graph
 from extraction.schemas import (
     CanonicalCharge,
     ChargeExtraction,
+    PerUnitShape,
     PipelineStatus,
+    PricingShapes,
     ProposedRule,
     ProvisionalIdentity,
     SectionType,
@@ -38,7 +40,7 @@ def _good_vts_rule(minimum=100.0):
         charge=CanonicalCharge.VTS,
         outcome=SemanticOutcome.MAPPED,
         proposed_rule=ProposedRule(
-            basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 0.5}, multiplicity="per_call", minimum=minimum
+            basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.5)), multiplicity="per_call", minimum=minimum
         ),
         provenance_pages=[2],
     )
@@ -110,7 +112,7 @@ def test_invalid_extraction_triggers_a_validate_repair_round_that_succeeds():
                     return ChargeExtraction(
                         charge=CanonicalCharge.VTS,
                         outcome=SemanticOutcome.MAPPED,
-                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 0.5}, multiplicity="per_call"),
+                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.5)), multiplicity="per_call"),
                         provenance_pages=[2],
                     )
                 return _good_vts_rule()
@@ -307,12 +309,12 @@ def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_
                     return ChargeExtraction(
                         charge=CanonicalCharge.LIGHT_DUES,
                         outcome=SemanticOutcome.MAPPED,
-                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     )
                 return ChargeExtraction(
                     charge=CanonicalCharge.LIGHT_DUES,
                     outcome=SemanticOutcome.MAPPED,
-                    proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                 )
             return ChargeExtraction(charge=CanonicalCharge.PORT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
         if schema_name == "VerifierResult":
@@ -380,7 +382,7 @@ def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_an
                 return ChargeExtraction(
                     charge=CanonicalCharge.PORT_DUES,
                     outcome=SemanticOutcome.MAPPED,
-                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     provenance_pages=[2],
                 )
             return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
@@ -438,7 +440,7 @@ def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not
                 return ChargeExtraction(
                     charge=CanonicalCharge.VTS,
                     outcome=SemanticOutcome.MAPPED,
-                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     provenance_pages=[2],
                 )
             return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
@@ -472,7 +474,7 @@ def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever
             return ChargeExtraction(
                 charge=CanonicalCharge.VTS,
                 outcome=SemanticOutcome.MAPPED,
-                proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={}, multiplicity="per_call"),
+                proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
             )
         if schema_name == "VerifierResult":
             verify_was_called["called"] = True

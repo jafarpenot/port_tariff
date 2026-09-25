@@ -22,7 +22,8 @@ from .schemas import CanonicalCharge, ChargeExtraction, SemanticOutcome, Verifie
 from .tools import make_tools
 
 MAX_VERIFY_TOOL_ROUNDS = 4
-DEFAULT_CONCURRENCY_LIMIT = 5
+DEFAULT_CONCURRENCY_LIMIT = 3  # see extraction/extract.py's DEFAULT_CONCURRENCY_LIMIT — same
+# reasoning, only relevant when this module is called directly, not through the graph.
 
 
 def _summarize_proposal(extraction: ChargeExtraction) -> str:

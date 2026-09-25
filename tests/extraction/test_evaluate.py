@@ -15,7 +15,7 @@ from extraction.evaluate import (
     score_towage,
     score_vts,
 )
-from extraction.schemas import CanonicalCharge, ChargeReportEntry, ProposedRule, SemanticOutcome
+from extraction.schemas import BandedShape, CanonicalCharge, ChargeReportEntry, PerUnitShape, PricingShapes, ProposedRule, SemanticOutcome
 
 GOLD = load_schedule()
 
@@ -73,15 +73,15 @@ def test_combined_column_label_resolves_correctly_for_both_ports_it_names():
     resolver could only ever return one port for a combined label like
     "Port Elizabeth / Ngqura" — Ngqura won the tie-break every time and
     Port Elizabeth's real value silently fell back to Other."""
-    combined = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 14.33}, multiplicity="per_call")
-    other = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 10.49}, multiplicity="per_call")
+    combined = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=14.33)), multiplicity="per_call")
+    other = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=10.49)), multiplicity="per_call")
     per_port_rules = {"Port Elizabeth / Ngqura": combined, "Other": other}
     assert resolve_rule_for_port(Port.PORT_ELIZABETH, per_port_rules) is combined
     assert resolve_rule_for_port(Port.NGQURA, per_port_rules) is combined
 
 
 def _rate_rule(rate):
-    return ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": rate}, multiplicity="per_call")
+    return ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=rate)), multiplicity="per_call")
 
 
 def test_exclusion_phrased_label_does_not_hijack_the_named_port_it_excludes():
@@ -135,8 +135,7 @@ def test_score_towage_perfect_durban_proposal_scores_100_percent_with_reordered_
         basis="gross_tonnage",
         rounding_mode="ceil_to_unit",
         rounding_unit=100,
-        pricing_type="banded",
-        pricing_params={"bands": proposed_bands},
+        pricing=PricingShapes(banded=BandedShape(selected=True, bands=proposed_bands)),
         multiplicity="per_service",
     )
     entry = ChargeReportEntry(

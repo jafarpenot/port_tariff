@@ -1,4 +1,14 @@
-from extraction.schemas import CanonicalCharge, ChargeExtraction, ProposedRule, SemanticOutcome, ValidationSeverity
+from extraction.schemas import (
+    BandedShape,
+    BasePlusIncrementShape,
+    CanonicalCharge,
+    ChargeExtraction,
+    PerUnitShape,
+    PricingShapes,
+    ProposedRule,
+    SemanticOutcome,
+    ValidationSeverity,
+)
 from extraction.validate import validate_charge
 
 PAGE_TEXTS = {1: "Some opening text.", 2: "Rate 12.5 per unit, minimum 100."}
@@ -13,8 +23,16 @@ def _mapped(rule: ProposedRule, pages=None) -> ChargeExtraction:
     )
 
 
+def _per_unit(rate: float) -> PricingShapes:
+    return PricingShapes(per_unit=PerUnitShape(selected=True, rate=rate))
+
+
+def _banded(bands: list[dict]) -> PricingShapes:
+    return PricingShapes(banded=BandedShape(selected=True, bands=bands))
+
+
 def test_valid_per_unit_rule_passes():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 12.5}, multiplicity="per_call")
+    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(12.5), multiplicity="per_call")
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is True
     assert result.issues == []
@@ -25,13 +43,12 @@ def test_valid_banded_rule_passes():
         basis="gross_tonnage",
         rounding_mode="ceil_to_unit",
         rounding_unit=100,
-        pricing_type="banded",
-        pricing_params={
-            "bands": [
+        pricing=_banded(
+            [
                 {"min_exclusive": 0, "max_inclusive": 2000, "base": 100.0, "increment_above": None, "per_unit_rate": None},
                 {"min_exclusive": 2000, "max_inclusive": None, "base": 200.0, "increment_above": 2000, "per_unit_rate": 5.0},
             ]
-        },
+        ),
         multiplicity="per_service",
     )
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
@@ -39,7 +56,7 @@ def test_valid_banded_rule_passes():
 
 
 def test_unknown_basis_is_hard_and_lists_allowed_options():
-    rule = ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call")
+    rule = ProposedRule(basis="displacement", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is False
     issue = next(i for i in result.issues if "basis" in i.message.lower())
@@ -48,16 +65,9 @@ def test_unknown_basis_is_hard_and_lists_allowed_options():
 
 
 def test_ceil_to_unit_without_a_unit_is_hard():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call")
+    rule = ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing=_per_unit(1.0), multiplicity="per_call")
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is False
-
-
-def test_missing_required_pricing_param_is_hard_and_names_the_missing_key():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="base_plus_increment", pricing_params={"base": 10.0}, multiplicity="per_call")
-    result = validate_charge(_mapped(rule), PAGE_TEXTS)
-    assert result.valid is False
-    assert any("rate" in i.message for i in result.issues)
 
 
 def test_band_not_starting_at_zero_is_hard():
@@ -65,8 +75,7 @@ def test_band_not_starting_at_zero_is_hard():
         basis="gross_tonnage",
         rounding_mode="ceil_to_unit",
         rounding_unit=100,
-        pricing_type="banded",
-        pricing_params={"bands": [{"min_exclusive": 5, "max_inclusive": None, "base": 1.0, "increment_above": None, "per_unit_rate": None}]},
+        pricing=_banded([{"min_exclusive": 5, "max_inclusive": None, "base": 1.0, "increment_above": None, "per_unit_rate": None}]),
         multiplicity="per_service",
     )
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
@@ -78,13 +87,12 @@ def test_band_gap_between_bands_is_hard():
         basis="gross_tonnage",
         rounding_mode="ceil_to_unit",
         rounding_unit=100,
-        pricing_type="banded",
-        pricing_params={
-            "bands": [
+        pricing=_banded(
+            [
                 {"min_exclusive": 0, "max_inclusive": 1000, "base": 1.0, "increment_above": None, "per_unit_rate": None},
                 {"min_exclusive": 2000, "max_inclusive": None, "base": 2.0, "increment_above": 2000, "per_unit_rate": 1.0},  # gap: 1000 -> 2000
             ]
-        },
+        ),
         multiplicity="per_service",
     )
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
@@ -96,8 +104,7 @@ def test_final_band_not_open_ended_is_hard():
         basis="gross_tonnage",
         rounding_mode="ceil_to_unit",
         rounding_unit=100,
-        pricing_type="banded",
-        pricing_params={"bands": [{"min_exclusive": 0, "max_inclusive": 1000, "base": 1.0, "increment_above": None, "per_unit_rate": None}]},
+        pricing=_banded([{"min_exclusive": 0, "max_inclusive": 1000, "base": 1.0, "increment_above": None, "per_unit_rate": None}]),
         multiplicity="per_service",
     )
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
@@ -105,21 +112,21 @@ def test_final_band_not_open_ended_is_hard():
 
 
 def test_cited_page_out_of_range_is_hard():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call")
+    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")
     result = validate_charge(_mapped(rule, pages=[999]), PAGE_TEXTS)
     assert result.valid is False
     assert any("999" in i.message for i in result.issues)
 
 
 def test_negative_smoke_calculation_result_is_hard():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": -5.0}, multiplicity="per_call")
+    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(-5.0), multiplicity="per_call")
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is False
     assert any("negative" in i.message for i in result.issues)
 
 
 def test_numeric_value_not_on_cited_page_is_a_warning_not_a_block():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 999999.99}, multiplicity="per_call")
+    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(999999.99), multiplicity="per_call")
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is True  # warning, not hard
     assert any(i.severity is ValidationSeverity.WARNING for i in result.issues)
@@ -152,7 +159,7 @@ def test_not_present_needs_nothing_else_and_is_valid():
 
 
 def _rate_rule(rate=1.0):
-    return ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": rate}, multiplicity="per_call")
+    return ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(rate), multiplicity="per_call")
 
 
 def test_varies_by_port_with_all_valid_rules_is_valid():
@@ -178,7 +185,7 @@ def test_varies_by_port_one_bad_port_fails_and_names_the_port():
         charge=CanonicalCharge.VTS,
         outcome=SemanticOutcome.MAPPED,
         varies_by_port=True,
-        per_port_rules={"Durban": _rate_rule(0.65), "Cape Town": ProposedRule(basis="displacement", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call")},
+        per_port_rules={"Durban": _rate_rule(0.65), "Cape Town": ProposedRule(basis="displacement", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")},
         provenance_pages=[2],
     )
     result = validate_charge(extraction, PAGE_TEXTS)

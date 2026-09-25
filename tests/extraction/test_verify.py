@@ -3,6 +3,8 @@ from langchain_core.messages import AIMessage
 from extraction.schemas import (
     CanonicalCharge,
     ChargeExtraction,
+    PerUnitShape,
+    PricingShapes,
     ProposedRule,
     SemanticOutcome,
     VerifierFinding,
@@ -19,7 +21,7 @@ def _mapped_extraction(charge):
     return ChargeExtraction(
         charge=charge,
         outcome=SemanticOutcome.MAPPED,
-        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 1.0}, multiplicity="per_call"),
+        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
         provenance_pages=[3],
     )
 

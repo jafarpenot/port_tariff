@@ -16,17 +16,6 @@ from tariffs.shapes import banded_base_plus_increment, base_plus_increment, base
 
 from .schemas import ChargeExtraction, ProposedRule, SemanticOutcome, ValidationIssue, ValidationResult, ValidationSeverity
 
-# The exact keys Extract's `pricing_params` must use per pricing_type —
-# named in every "missing required params" error, which is how a repair
-# round actually converges (§6.5: Validate's errors are what Extract
-# gets back).
-REQUIRED_PRICING_PARAMS = {
-    PricingType.PER_UNIT.value: {"rate"},
-    PricingType.BASE_PLUS_INCREMENT.value: {"base", "rate"},
-    PricingType.BANDED.value: {"bands"},
-    PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value: {"basic_rate", "daily_rate"},
-}
-
 # Synthetic vessels for the smoke calculation (§6.4) — small, medium, large.
 _SMOKE_TEST_UNITS = [10.0, 5_000.0, 120_000.0]
 
@@ -47,8 +36,9 @@ def _validate_enums(rule: ProposedRule) -> list[ValidationIssue]:
         issues.append(_hard(f"Unknown rounding mode {rule.rounding_mode!r}", [m.value for m in RoundingMode]))
     elif rule.rounding_mode == RoundingMode.CEIL_TO_UNIT.value and not rule.rounding_unit:
         issues.append(_hard("rounding_mode 'ceil_to_unit' requires a positive rounding_unit."))
-    if rule.pricing_type not in REQUIRED_PRICING_PARAMS:
-        issues.append(_hard(f"Unknown pricing_type {rule.pricing_type!r}", list(REQUIRED_PRICING_PARAMS)))
+    # No "unknown pricing_type" check here any more: `rule.pricing` (a
+    # PricingShapes) makes that structurally impossible to construct —
+    # see extraction/schemas.py.
     if rule.multiplicity not in {m.value for m in Multiplicity}:
         issues.append(_hard(f"Unknown multiplicity {rule.multiplicity!r}", [m.value for m in Multiplicity]))
     if rule.time_rounding is not None and rule.time_rounding not in {t.value for t in TimeRounding}:
@@ -58,17 +48,11 @@ def _validate_enums(rule: ProposedRule) -> list[ValidationIssue]:
 
 def _validate_band_structure(bands: list[dict]) -> list[ValidationIssue]:
     """Ordered, contiguous under the exclusive/inclusive interval
-    convention (SPEC.md §5.4); final band open-ended or explicit null."""
+    convention (SPEC.md §5.4); final band open-ended or explicit null.
+    Every band is guaranteed to have all five keys present by
+    `PricingBand` (extraction/schemas.py) — only ordering/contiguity,
+    which Pydantic can't express declaratively, is checked here."""
     issues: list[ValidationIssue] = []
-    if not bands:
-        issues.append(_hard("pricing_type 'banded' requires at least one band."))
-        return issues
-    required_keys = {"min_exclusive", "max_inclusive", "base", "increment_above", "per_unit_rate"}
-    for i, band in enumerate(bands):
-        missing = required_keys - set(band.keys())
-        if missing:
-            issues.append(_hard(f"band[{i}] missing keys: {sorted(missing)} (required: {sorted(required_keys)})"))
-            return issues  # structural — can't check ordering without these
     if bands[0]["min_exclusive"] != 0:
         issues.append(_hard(f"band[0].min_exclusive must be 0, got {bands[0]['min_exclusive']!r}."))
     for i in range(1, len(bands)):
@@ -81,18 +65,15 @@ def _validate_band_structure(bands: list[dict]) -> list[ValidationIssue]:
     return issues
 
 
-def _validate_pricing_params(rule: ProposedRule) -> list[ValidationIssue]:
-    issues: list[ValidationIssue] = []
-    required = REQUIRED_PRICING_PARAMS.get(rule.pricing_type)
-    if required is None:
-        return issues  # already flagged as an unknown pricing_type by _validate_enums
-    missing = required - set(rule.pricing_params.keys())
-    if missing:
-        issues.append(_hard(f"pricing_type {rule.pricing_type!r} is missing required params {sorted(missing)} (needs: {sorted(required)})."))
-        return issues
-    if rule.pricing_type == PricingType.BANDED.value:
-        issues.extend(_validate_band_structure(rule.pricing_params["bands"]))
-    return issues
+def _validate_pricing(rule: ProposedRule) -> list[ValidationIssue]:
+    """Required-keys-per-shape is enforced structurally now, by
+    `PricingShapes`'s own model validator (extraction/schemas.py) — a
+    `ChargeExtraction` with a malformed pricing shape can't be
+    constructed at all, so it never reaches here. Only band
+    ordering/contiguity is left to check."""
+    if rule.pricing.banded.selected:
+        return _validate_band_structure(rule.pricing_params["bands"])
+    return []
 
 
 def _validate_citations(extraction: ChargeExtraction, page_texts: dict[int, str]) -> list[ValidationIssue]:
@@ -163,7 +144,7 @@ def _validate_numeric_citations(rule: ProposedRule, extraction: ChargeExtraction
 
 def _validate_one_rule(rule: ProposedRule, extraction: ChargeExtraction, page_texts: dict[int, str]) -> list[ValidationIssue]:
     issues = list(_validate_enums(rule))
-    issues.extend(_validate_pricing_params(rule))
+    issues.extend(_validate_pricing(rule))
     if not any(i.severity is ValidationSeverity.HARD for i in issues):
         issues.extend(_smoke_calculate(rule))
         issues.extend(_validate_numeric_citations(rule, extraction, page_texts))

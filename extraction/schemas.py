@@ -10,7 +10,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CanonicalCharge(str, Enum):
@@ -142,26 +142,145 @@ class SectionConsidered(BaseModel):
     )
 
 
+class PricingBand(BaseModel):
+    """One band row of a `banded` proposal — same shape Validate and the
+    evaluator already expect as a dict (`min_exclusive`/`max_inclusive`/
+    `base`/`increment_above`/`per_unit_rate`), now a real typed model
+    instead of a free dict with those keys hoped-for."""
+
+    min_exclusive: float
+    max_inclusive: Optional[float] = None
+    base: Optional[float] = None
+    increment_above: Optional[float] = None
+    per_unit_rate: Optional[float] = None
+
+
+class PerUnitShape(BaseModel):
+    selected: bool = False
+    rate: Optional[float] = Field(default=None, description="Required, and only set, if this shape is selected.")
+
+
+class BasePlusIncrementShape(BaseModel):
+    selected: bool = False
+    base: Optional[float] = None
+    rate: Optional[float] = None
+
+
+class BandedShape(BaseModel):
+    selected: bool = False
+    bands: Optional[list[PricingBand]] = None
+
+
+class BasePlusIncrementTimesDurationShape(BaseModel):
+    selected: bool = False
+    basic_rate: Optional[float] = None
+    daily_rate: Optional[float] = None
+
+
+class PricingShapes(BaseModel):
+    """One field per closed pricing type (tariffs/rules.py's
+    `PricingType`), each a fixed, fully-typed shape rather than a free
+    `dict[str, Any]` — a model must set `selected=true` on exactly one
+    and fill in only that one's fields, leaving the other three
+    untouched. Deliberately not a discriminated union: a plain object
+    with fixed named fields is the most portable structured-output
+    shape across providers, where a `oneOf`/discriminator construct has
+    had real, provider-specific rough edges (found live: OpenAI's
+    strict structured-output mode rejected this package's old free
+    `pricing_params: dict[str, Any]` outright, since every object in a
+    strict-mode schema must set `additionalProperties: false` — a free
+    dict structurally cannot).
+
+    This closes the actual bug this design replaces: a model could
+    previously invent any key name it liked in `pricing_params`, the
+    mismatch only surfacing downstream at Validate with a prose
+    correction it didn't reliably act on (confirmed recurring
+    independently on two different books). Here, an incomplete or
+    contradictory answer fails Pydantic validation immediately, inside
+    `structured_call()`'s own retry loop — before Validate, before a
+    full graph repair round."""
+
+    per_unit: PerUnitShape = Field(default_factory=PerUnitShape)
+    base_plus_increment: BasePlusIncrementShape = Field(default_factory=BasePlusIncrementShape)
+    banded: BandedShape = Field(default_factory=BandedShape)
+    base_plus_increment_times_duration: BasePlusIncrementTimesDurationShape = Field(
+        default_factory=BasePlusIncrementTimesDurationShape
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_selected_and_complete(self) -> "PricingShapes":
+        shapes = {
+            "per_unit": self.per_unit,
+            "base_plus_increment": self.base_plus_increment,
+            "banded": self.banded,
+            "base_plus_increment_times_duration": self.base_plus_increment_times_duration,
+        }
+        selected = [name for name, shape in shapes.items() if shape.selected]
+        if len(selected) != 1:
+            raise ValueError(f"exactly one pricing shape must be selected=true, got {selected!r}")
+        chosen = selected[0]
+        for name, shape in shapes.items():
+            values = shape.model_dump(exclude={"selected"}).values()
+            if name == chosen:
+                if any(v is None for v in values):
+                    raise ValueError(f"selected shape {name!r} is missing required fields: {shape!r}")
+                if name == "banded" and not shape.bands:
+                    raise ValueError("selected shape 'banded' requires at least one band.")
+            elif any(v is not None for v in values):
+                raise ValueError(f"unselected shape {name!r} must not have any fields set: {shape!r}")
+        return self
+
+    @property
+    def pricing_type(self) -> str:
+        """Which shape is selected, as a plain string — derived, never a
+        second independently-settable field that could disagree with
+        what's actually populated."""
+        for name in ("per_unit", "base_plus_increment", "banded", "base_plus_increment_times_duration"):
+            if getattr(self, name).selected:
+                return name
+        raise AssertionError("unreachable — the model validator guarantees exactly one selection")  # pragma: no cover
+
+    @property
+    def params(self) -> dict[str, Any]:
+        """The selected shape's own fields as a plain dict, e.g.
+        `{"rate": 0.5}` or `{"bands": [...]}` — the same shape
+        `pricing_params` used to be, for code that wants a flat view
+        (Validate's smoke-calc, the TNPA evaluator) rather than reaching
+        into the specific shape object."""
+        shape = getattr(self, self.pricing_type)
+        dumped = shape.model_dump(exclude={"selected"})
+        if self.pricing_type == "banded" and dumped.get("bands"):
+            dumped["bands"] = [b if isinstance(b, dict) else b.model_dump() for b in dumped["bands"]]
+        return dumped
+
+
 class ProposedRule(BaseModel):
     """An Extract proposal for a Mapped charge, in the closed vocabulary
     from tariffs/rules.py (basis / rounding / pricing / multiplicity /
-    time / min-max). `pricing_params` is intentionally a loose dict here
-    rather than a second discriminated union duplicating every pricing
-    type's parameter shape — the real, strict shape check happens once,
-    at Validate, against tariffs.rules/tariffs.schedule directly. This
-    schema only has to be strict about the things a model must not
-    invent freely: the four closed-enum fields below."""
+    time / min-max)."""
 
     basis: str
     rounding_mode: str
     rounding_unit: Optional[float] = None
-    pricing_type: str
-    pricing_params: dict[str, Any] = Field(default_factory=dict)
+    pricing: PricingShapes
     multiplicity: str
     time_unit_hours: Optional[float] = None
     time_rounding: Optional[str] = None
     minimum: Optional[float] = None
     maximum: Optional[float] = None
+
+    @property
+    def pricing_type(self) -> str:
+        """Read-only, derived from `pricing` — kept so existing code
+        that only ever *reads* a rule's shape (Validate's smoke-calc,
+        the evaluator, the report/demo printers) didn't need to change
+        when `pricing_params` stopped being a free dict."""
+        return self.pricing.pricing_type
+
+    @property
+    def pricing_params(self) -> dict[str, Any]:
+        """Read-only, derived from `pricing`. See `pricing_type` above."""
+        return self.pricing.params
 
 
 class ChargeExtraction(BaseModel):

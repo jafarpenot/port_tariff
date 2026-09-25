@@ -30,7 +30,10 @@ from .schemas import (
 from .tools import make_tools
 
 MAX_LEAD_ROUNDS = 2
-DEFAULT_CONCURRENCY_LIMIT = 5
+DEFAULT_CONCURRENCY_LIMIT = 3  # graph.py reuses this one constant as the shared default for
+# map/extract/verify alike (§6's single, config-overridable knob). Lowered from 5 after a
+# live 429 on GPT-6 Luna: 6 charges extracting in parallel burst past a 200k TPM account
+# limit. Still configurable per run via config["configurable"]["concurrency_limit"].
 
 
 def _repair_note(issues: list[ValidationIssue]) -> str:

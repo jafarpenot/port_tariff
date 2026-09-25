@@ -13,7 +13,7 @@ from extraction.identity import provisional_identity
 from extraction.llm import default_llm
 from extraction.map_node import map_document
 from extraction.pdf import split_pdf
-from extraction.schemas import CanonicalCharge, ChargeExtraction, ProposedRule, SemanticOutcome, has_material_finding
+from extraction.schemas import CanonicalCharge, ChargeExtraction, PerUnitShape, PricingShapes, ProposedRule, SemanticOutcome, has_material_finding
 from extraction.verify import verify_charge
 
 pytestmark = pytest.mark.skipif(not os.environ.get("OPENAI_API_KEY"), reason="requires a real OPENAI_API_KEY")
@@ -51,7 +51,7 @@ def test_live_verify_catches_an_obviously_wrong_rate(page_texts):
     wrong_extraction = ChargeExtraction(
         charge=CanonicalCharge.VTS,
         outcome=SemanticOutcome.MAPPED,
-        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing_type="per_unit", pricing_params={"rate": 999.0}, multiplicity="per_call"),
+        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=999.0)), multiplicity="per_call"),
         provenance_pages=[11],
     )
     result = verify_charge(CanonicalCharge.VTS, wrong_extraction, page_texts, llm)

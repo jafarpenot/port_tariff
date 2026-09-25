@@ -18,7 +18,8 @@ from .schemas import WindowMapResult
 
 DEFAULT_WINDOW_SIZE = 5
 DEFAULT_WINDOW_OVERLAP = 1
-DEFAULT_CONCURRENCY_LIMIT = 5
+DEFAULT_CONCURRENCY_LIMIT = 3  # see extraction/extract.py's DEFAULT_CONCURRENCY_LIMIT — same
+# reasoning, only relevant when this module is called directly, not through the graph.
 
 
 def window_ranges(n_pages: int, window_size: int = DEFAULT_WINDOW_SIZE, overlap: int = DEFAULT_WINDOW_OVERLAP) -> list[tuple[int, int]]:
