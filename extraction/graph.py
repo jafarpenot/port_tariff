@@ -20,6 +20,7 @@ interrupt/resume, and an LLM client object is not serialisable.
 from __future__ import annotations
 
 import sys
+import time
 from typing import Any, Optional, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -32,6 +33,7 @@ from .identity import provisional_identity
 from .map_node import DEFAULT_WINDOW_OVERLAP, DEFAULT_WINDOW_SIZE, map_document
 from .pdf import split_pdf
 from .report import build_report
+from .run_log import write_run_log
 from .schemas import (
     CanonicalCharge,
     ChargeExtraction,
@@ -54,6 +56,7 @@ VERIFY_BUDGET = 1  # §6.7, configurable, max 2 — Verify's adversarial repair 
 
 class PipelineState(TypedDict, total=False):
     pdf_path: str
+    run_started_at: float
 
     page_texts: dict[int, str]
     provisional_identity: Any
@@ -84,9 +87,13 @@ def _log(msg: str) -> None:
 
 
 def node_split(state: PipelineState, config) -> dict:
+    # The graph's single entry point (never re-run on a resume after the
+    # human-approval interrupt) — the one place to timestamp "run started"
+    # for extraction/run_log.py's duration field.
+    started_at = state.get("run_started_at") or time.time()
     if state.get("page_texts"):
-        return {}
-    return {"page_texts": split_pdf(state["pdf_path"])}
+        return {"run_started_at": started_at}
+    return {"page_texts": split_pdf(state["pdf_path"]), "run_started_at": started_at}
 
 
 def node_identity(state: PipelineState, config) -> dict:
@@ -366,6 +373,19 @@ def node_report(state: PipelineState, config) -> dict:
         verify_rounds=state.get("verify_rounds", {}),
         disagreements=state.get("disagreements", []),
     )
+    # Detailed, per-run log — every invocation of this graph (pytest, the
+    # Streamlit page, an ad-hoc script), not just the ones run through
+    # pytest (tests/conftest.py's hook only sees those).
+    try:
+        write_run_log(
+            report,
+            pdf_path=state.get("pdf_path", "(unknown)"),
+            llm=_cfg(config, "llm"),
+            thread_id=_cfg(config, "thread_id"),
+            started_at=state.get("run_started_at"),
+        )
+    except OSError:
+        pass  # a log write failing must never fail the pipeline itself
     return {"report": report}
 
 
