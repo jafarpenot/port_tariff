@@ -65,65 +65,94 @@ silent downgrade isn't. `graph.py` intentionally not updated — only
 `pipeline.py` is actively maintained since this session's pivot to a linear
 architecture.
 
-## Map/Extract sometimes cite the book's own printed page number instead of the PDF file's page index
+## ~~Map/Extract sometimes cite the book's own printed page number instead of the PDF file's page index~~ — fixed
 
-Found live on the first full TNPA run through `pipeline.py` after landing
-native-PDF input, the page-mapping fix, and the three fixes above
+Was here as an open item, found on the first full TNPA run through
+`pipeline.py` after landing native-PDF input and the four fixes above
 (`eval_runs/auto/20260926T155113Z_full-tnpa-after-0abc.md`). This book packs
 two printed pages side-by-side per physical PDF page — confirmed directly by
 reading page footers with `pypdf`: PDF page 6's footer literally reads
-"...11...12", PDF page 8's reads "...15...16" (a clean `printed ≈
-2×pdf_index - 1` relationship, consistent everywhere checked). The
-page-mapping fix (`extraction/prompts.py`'s `_page_mapping_note`) tells the
-model explicitly "attachment page N = book page M" using M = the real PDF
-file index — but when the model can also see a page number visually printed
-on the page image itself, it sometimes reports *that* number instead,
-ignoring the instruction.
+"...11...12", PDF page 8's reads "...15...16". The page-mapping fix
+(`extraction/prompts.py`'s `_page_mapping_note`) tells the model explicitly
+"attachment page N = book page M" using M = the real PDF file index — but
+when the model can also see a page number visually printed on the page image
+itself, it sometimes reports *that* number instead, inconsistently (not
+every charge, not every window).
 
-**Confirmed live, not just theorized:** in that run, `vts`'s assembled
-context was `pages=[3, 11, 21, 24]` and `towage`'s was
-`pages=[3, 12, 15, 16, 17, 18]`. VTS's real content is at PDF page 6 (printed
-11) — a standalone test against PDF page 6 directly, earlier the same
-session, got a clean, correct `mapped` result. In the full run, VTS's citied
-"11" got fed straight into `extract_pdf_pages(pdf_path, [11, ...])`, which
-sliced actual PDF page 11 (printed 21/22) — completely unrelated content —
-and the charge came back `not_present`, which Verify then correctly flagged
-as wrong. Towage's cited pages (15-18) are the *printed* numbers for its real
-location (PDF pages 8-9); read as PDF file indices they select printed pages
-29-36 instead, and towage ended `EXTRACTION_FAILED` after repeatedly failing
-to produce a valid structure from the wrong content. Not universal, though:
-`light_dues`'s and `port_dues`'s context pages in the same run were correct,
-plausible PDF file indices — this is inconsistent model behavior, not a
-deterministic rule, which makes it harder to guard against with a prompt
-tweak alone. `pilotage`'s context (`[3, 12, 13, 14]`, PDF pages 12-14 contain
-"Section 4, Clause 4.2" language — port_dues territory, not pilotage) and its
-`SYSTEM_ERROR` (a `PricingShapes` validation failure exhausting
-`structured_call()`'s retries) look plausibly related but weren't
-independently confirmed the same way.
+Fixed with a deterministic check rather than a stronger prompt (prompts
+alone weren't reliable against competing visual evidence):
+`map_document()`'s `_call()` already knows the true `(start, end)` PDF-index
+range it gave the model for that window — `extraction/map_node.py`'s
+`_corrected_sections()` now treats any `WindowSection.page` outside that
+range as provably wrong and splits it into two sightings at the window's own
+start and end, so `merge_sections`' existing min/max union (`assemble.py`)
+spans the whole window the section was actually found in, instead of
+pointing `extract_pdf_pages()` at a single wrong physical page. Makes no
+assumption about this book's specific numbering scheme.
 
-**To fix:** the most promising angle is a deterministic code-level check, not
-a stronger prompt (prompts alone haven't been reliable against competing
-visual evidence): `map_document()`'s `_call()` already knows the true
-`(start, end)` PDF-index range it gave the model for that window — any
-`WindowSection.page` reported outside that range is provably wrong (whether
-from this cause or a hallucination) and could be flagged, clamped, or
-dropped before it ever reaches Assemble, rather than trusting the model's
-self-report the way `map_document()` already refuses to trust its
-`window_start_page`/`window_end_page` echo.
+**Live-verified with a clean before/after, same document, same two charges
+this broke:** re-ran the full pipeline
+(`eval_runs/auto/20260926T170213Z_full-tnpa-after-pagebounds.md`). `vts`
+went from wrongly `not_present` to `mapped` and fully resolved clean.
+`towage` went from `EXTRACTION_FAILED` (repeatedly invalid structure from
+reading the wrong pages) to `mapped` with a genuine content disagreement
+instead of structural garbage. `pilotage` went from a `SYSTEM_ERROR` crash to
+`mapped`. Across the whole run: zero `SYSTEM_ERROR`, zero
+`EXTRACTION_FAILED` — every one of the six charges reached `mapped`, for the
+first time this session.
 
-## Other content-quality gaps surfaced by the same run — not investigated further
+## Widening an uncertain page citation to the whole window trades precision for safety — confirmed real, not just theoretical
 
-- `light_dues`: proposal used a flat per-gross-tonnage rate instead of the
-  source's "per 100 tons or part thereof" unit, and didn't apply the page's
-  stated 15% VAT — the latter is exactly what `modifiers` (above) is for, but
-  the model didn't use it here. Worth a live recheck once the page-numbering
-  issue is addressed, since a wrong/irrelevant context page could equally
-  explain a wrong rate structure.
-- `port_dues`: proposal modeled the charge as a single flat per-call rate;
-  the source specifies per-metre-of-length-overall-per-day tiers (2.82, 5.56,
-  11.14, then 33.45 after 12 months) — likely the same "compositional pricing
-  vocabulary gap" already named for towage's discrete per-tug table, not a
-  quick fix.
+Direct side effect of the fix above, found on the same before/after
+comparison. Correcting an out-of-range citation to span the whole window
+(rather than a single page) means a charge's assembled context can include
+several pages that aren't actually relevant, alongside the one that is.
+`towage`'s context went from a single correct page in an earlier isolated
+test (where every per-port rate matched gold exactly) to
+`pages=[3, 6, 8, 9, 11, 13, 14, 15]` in the full run — page 8 (the real
+table) is correctly included now, but so are seven others. In that run,
+towage's per-port rates regressed to the *same* column-swap errors seen on
+the very first pre-fix run months ago (Richards Bay's rate attributed to
+Cape Town, Saldanha's to a different port, etc.) — plausibly the wider,
+noisier context diluting the model's attention across ports/columns, though
+not proven against a controlled comparison.
+
+**To consider:** a tighter fallback than "the whole window" — e.g. clamping
+to just the nearer bound (start or end, whichever the out-of-range value is
+closer to) rather than always including both — would recover some
+precision, at the cost of no longer being provably guaranteed to include the
+real page. Not attempted; the current fix prioritizes never silently
+dropping real content, which is the more serious failure mode of the two.
+
+## A recurring "per N units or part thereof" rounding-unit gap — confirmed on four separate charges
+
+Found on the same post-fix full run. `port_dues`, `towage`, `pilotage`, and
+`berthing_services` **all** had Verify flag the same shape of mistake: the
+source states a rate "per 100 tons or part thereof," but the proposal
+represents it as a flat per-gross-tonnage rate, silently dropping the 100-ton
+unit and the round-up-on-any-remainder rule (`RoundingMode.CEIL_TO_UNIT` with
+`rounding_unit=100`, both already available fields per the enum fix above).
+Four different charges hitting the identical mistake independently is too
+consistent to be charge-specific noise — looks like the model isn't reliably
+recognizing "per N units or part thereof" as `ceil_to_unit`, independent of
+anything built this session. `berthing_services` also had a real omission of
+a separate bespoke tanker-attendance charge (R1,267.83/hour at two named
+ports) with nowhere obviously right to put it — a different kind of gap than
+a simple surcharge `modifiers` covers.
+
+**To consider:** `EXTRACT_SYSTEM_PROMPT` could be more explicit that "per N
+[unit] or part thereof" always means `ceil_to_unit` with that N as
+`rounding_unit` — worth trying cheaply, in the same spirit as the earlier
+"don't extrapolate past n/a" suggestion, before considering anything more
+structural. Not attempted here.
+
+## `port_dues`: time-tiered per-metre rate doesn't fit the four pricing shapes
+
+Confirmed on the same run: the source specifies per-metre-of-length-overall-
+per-day tiers (2.82, 5.56, 11.14, then 33.45 after 12 months), but
+`port_dues`'s proposal modeled it as a single flat per-call rate. Likely the
+same "compositional pricing vocabulary gap" already named for towage's
+discrete per-tug table — bigger, structural work, not a quick fix.
 
 ## ~~No field for conditional surcharges/modifiers on `ProposedRule`~~ — fixed
 
