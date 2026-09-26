@@ -71,7 +71,7 @@ class WindowSection(BaseModel):
     section_number: Optional[str] = None
     heading: str
     section_type: SectionType
-    page: int = Field(description="The page this section's heading appears on — pages in your context are marked '[page N]'.")
+    page: int = Field(description="The page this section's heading appears on, using this attachment's own given page numbering.")
     affects_charges: list[CanonicalCharge] = Field(
         default_factory=list,
         description="Every canonical charge this section sets, modifies, exempts, discounts or surcharges — not just its own main charge.",

@@ -23,7 +23,7 @@ from typing import Any
 from .llm import structured_call
 from .pdf import extract_pdf_pages
 from .prompts import MAP_SYSTEM_PROMPT, map_user_prompt
-from .schemas import WindowMapResult
+from .schemas import WindowMapResult, WindowSection
 
 DEFAULT_WINDOW_SIZE = 5
 DEFAULT_WINDOW_OVERLAP = 1
@@ -50,6 +50,30 @@ def window_ranges(n_pages: int, window_size: int = DEFAULT_WINDOW_SIZE, overlap:
             break
         start += stride
     return ranges
+
+
+def _corrected_sections(section: WindowSection, start: int, end: int) -> list[WindowSection]:
+    """A section's reported page is only trustworthy inside [start, end]
+    — the exact PDF pages actually attached for this call, known with
+    certainty regardless of anything the model reports. Found live: a
+    model can cite the book's own printed page number (visible on the
+    page image itself) instead of the attachment-position page it was
+    explicitly told to use, and does so inconsistently — a prompt
+    instruction alone isn't a reliable enough defense.
+
+    An out-of-range citation still means the section is real and was
+    seen somewhere in this window — dropping it or keeping the wrong
+    number both lose real content or point Extract at the wrong page.
+    Instead, split it into two sightings at the window's own start and
+    end: merge_sections (extraction/assemble.py) already unions a
+    section's page across every sighting via min/max, the same
+    mechanism that already reconciles overlapping windows' agreeing
+    sightings of the same section — so this makes an untrustworthy
+    citation span the whole window it was actually found in, rather
+    than pointing at a single, possibly wrong, page."""
+    if start <= section.page <= end:
+        return [section]
+    return [section.model_copy(update={"page": start}), section.model_copy(update={"page": end})]
 
 
 def _window_content(pdf_path: str, start: int, end: int) -> list:
@@ -82,6 +106,7 @@ def map_document(
         # confused model can't misreport which pages it actually saw.
         result.window_start_page = start
         result.window_end_page = end
+        result.sections = [s for section in result.sections for s in _corrected_sections(section, start, end)]
         return result
 
     if not ranges:
