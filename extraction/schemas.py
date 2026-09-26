@@ -262,10 +262,39 @@ class PricingShapes(BaseModel):
         return dumped
 
 
+class Modifier(BaseModel):
+    """A conditional surcharge, discount, or exemption on top of the
+    base rate above — a weekend surcharge, a fee per additional tug, a
+    delay charge — not something the four fixed pricing shapes above are
+    meant to express. Every modifier must be captured one way or
+    another: `adjustment_percentage`/`adjustment_flat_amount` for the
+    common cases, `raw_description` (a verbatim quote) when neither fits
+    — e.g. a rate-based delay fee — so a surcharge that doesn't fit a
+    clean numeric shape never becomes a reason to leave the whole charge
+    unmapped. Confirmed live: towage declined to map specifically
+    because its surcharges had nowhere to go (KNOWN_ISSUES.md)."""
+
+    condition: str = Field(
+        description="What triggers this modifier, in plain language (e.g. 'outside ordinary working hours', 'per additional tug')."
+    )
+    adjustment_percentage: Optional[float] = Field(default=None, description="e.g. 25 for a 25% surcharge, -10 for a 10% discount.")
+    adjustment_flat_amount: Optional[float] = Field(default=None, description="A flat currency amount, added or subtracted.")
+    raw_description: Optional[str] = Field(
+        default=None, description="Verbatim source text — use only when the adjustment doesn't fit a plain percentage or flat amount."
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_representation(self) -> "Modifier":
+        set_fields = [f for f in (self.adjustment_percentage, self.adjustment_flat_amount, self.raw_description) if f is not None]
+        if len(set_fields) != 1:
+            raise ValueError("exactly one of adjustment_percentage, adjustment_flat_amount, raw_description must be set")
+        return self
+
+
 class ProposedRule(BaseModel):
     """An Extract proposal for a Mapped charge, in the closed vocabulary
     from tariffs/rules.py (basis / rounding / pricing / multiplicity /
-    time / min-max)."""
+    time / min-max / modifiers)."""
 
     basis: Basis
     rounding_mode: RoundingMode
@@ -276,6 +305,7 @@ class ProposedRule(BaseModel):
     time_rounding: Optional[TimeRounding] = None
     minimum: Optional[float] = None
     maximum: Optional[float] = None
+    modifiers: list[Modifier] = Field(default_factory=list)
 
     @property
     def pricing_type(self) -> str:

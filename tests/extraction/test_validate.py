@@ -6,6 +6,7 @@ from extraction.schemas import (
     BasePlusIncrementShape,
     CanonicalCharge,
     ChargeExtraction,
+    Modifier,
     PerUnitShape,
     PricingShapes,
     ProposedRule,
@@ -134,6 +135,19 @@ def test_numeric_value_not_on_cited_page_is_a_warning_not_a_block():
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is True  # warning, not hard
     assert any(i.severity is ValidationSeverity.WARNING for i in result.issues)
+
+
+def test_modifier_value_not_on_cited_page_is_also_a_warning():
+    rule = ProposedRule(
+        basis="gross_tonnage",
+        rounding_mode="exact",
+        pricing=_per_unit(12.5),
+        multiplicity="per_call",
+        modifiers=[Modifier(condition="weekend surcharge", adjustment_percentage=999999.99)],
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is True
+    assert any("999999.99" in i.message and i.severity is ValidationSeverity.WARNING for i in result.issues)
 
 
 def test_bundled_without_included_in_is_hard():

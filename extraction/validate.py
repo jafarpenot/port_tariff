@@ -129,6 +129,7 @@ def _validate_numeric_citations(rule: ProposedRule, extraction: ChargeExtraction
         return []
     issues: list[ValidationIssue] = []
     numeric_values = [v for v in rule.pricing_params.values() if isinstance(v, (int, float))]
+    numeric_values += [v for m in rule.modifiers for v in (m.adjustment_percentage, m.adjustment_flat_amount) if v is not None]
     for value in numeric_values:
         if str(value) not in cited_text and f"{value:,.2f}" not in cited_text:
             issues.append(_warn(f"value {value!r} not found verbatim on its cited page(s) — PDF formatting may differ from the raw number."))

@@ -8,7 +8,7 @@ that failure mode is now caught here, at construction, not downstream.
 import pytest
 from pydantic import ValidationError
 
-from extraction.schemas import BandedShape, BasePlusIncrementShape, PerUnitShape, PricingShapes
+from extraction.schemas import BandedShape, BasePlusIncrementShape, Modifier, PerUnitShape, PricingShapes
 
 
 def test_a_fully_specified_shape_is_valid():
@@ -58,3 +58,30 @@ def test_banded_params_returns_bands_as_plain_dicts():
         )
     )
     assert shapes.params["bands"] == [{"min_exclusive": 0, "max_inclusive": None, "base": 1.0, "increment_above": None, "per_unit_rate": None}]
+
+
+def test_modifier_with_a_percentage_is_valid():
+    m = Modifier(condition="outside ordinary working hours", adjustment_percentage=25.0)
+    assert m.adjustment_flat_amount is None
+    assert m.raw_description is None
+
+
+def test_modifier_with_a_flat_amount_is_valid():
+    Modifier(condition="per additional tug", adjustment_flat_amount=50.0)
+
+
+def test_modifier_with_a_raw_description_is_valid():
+    """The escape hatch for a surcharge that doesn't fit a plain
+    percentage or flat amount — e.g. a rate-based delay fee — so it
+    never becomes a reason to leave the whole charge unmapped."""
+    Modifier(condition="delay at Saldanha", raw_description="half-hour-or-part delay fee, ZAR 500 per half hour")
+
+
+def test_modifier_with_none_set_is_rejected():
+    with pytest.raises(ValidationError):
+        Modifier(condition="outside ordinary working hours")
+
+
+def test_modifier_with_more_than_one_set_is_rejected():
+    with pytest.raises(ValidationError):
+        Modifier(condition="outside ordinary working hours", adjustment_percentage=25.0, adjustment_flat_amount=10.0)

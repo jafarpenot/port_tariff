@@ -44,6 +44,20 @@ IDENTITY_SYSTEM_PROMPT = (
 )
 
 
+def _page_mapping_note(pages: list[int]) -> str:
+    """A PDF attachment's own internal page count always starts at 1,
+    regardless of which book pages it actually contains — found live:
+    without this, a model reading an attached slice of pages 5-9 cited
+    section locations as "page 1"/"page 4" (the position within the
+    attachment), not the book's own page 5/8, silently corrupting every
+    downstream page citation. Spelled out explicitly and per-page rather
+    than as a single offset, since Extract's attachments are not always
+    a contiguous range (ChargeContext.pages can skip pages Map didn't
+    flag)."""
+    listing = ", ".join(f"attachment page {i} = book page {p}" for i, p in enumerate(pages, start=1))
+    return f"This attachment's page numbers do not start at 1. Mapping: {listing}. Always cite the book page number shown here, never the attachment's own page position."
+
+
 def identity_user_prompt(opening_pages_text: str) -> str:
     return (
         "Opening pages of a port tariff book:\n\n"
@@ -55,31 +69,37 @@ def identity_user_prompt(opening_pages_text: str) -> str:
 
 MAP_SYSTEM_PROMPT = (
     SCOPE_CONTRACT + "\n\n"
-    "For the page window you are given, list every section present: its "
-    "number (if any), its heading, and its type — 'charge' (it sets a fee "
-    "for something), 'general_terms' (definitions, or general conditions at "
-    "the head of a chapter), or 'irrelevant' (anything not about a vessel "
-    "call charge — training courses, equipment servicing, licences, and "
-    "similar). For every section, list every canonical charge type it "
-    "affects — not just its own main charge: a section can discount, exempt "
-    "or surcharge a charge that isn't its main subject. Also list every "
-    "explicit reference you see verbatim (a clause number, a section number, "
-    "an annex name) and any of the book's own metadata (authority, "
-    "jurisdiction, ports, schedule name, effective dates, currency) this "
-    "window happens to state.\n\n"
-    "Answer only from the text you are given. If a window's text is empty or "
-    "unreadable, return no sections rather than guessing."
+    "Your goal: find everything in this page range that could affect what a vessel is "
+    "actually charged for one of the six canonical charges above. This is the only pass "
+    "that will ever see these pages in full — a section you don't flag here is invisible "
+    "to every later step, even if it's the one place a real surcharge or exemption is "
+    "stated. When genuinely unsure whether something is relevant, flag it; a section "
+    "considered and dismissed later costs nothing, a section never surfaced at all is "
+    "gone for good.\n\n"
+    "Concretely, list every section present in the attached pages: its number (if any), "
+    "its heading, and its type — 'charge' (it sets a fee for something), 'general_terms' "
+    "(definitions, or general conditions at the head of a chapter), or 'irrelevant' "
+    "(anything not about a vessel call charge — training courses, equipment servicing, "
+    "licences, and similar). For every section, list every canonical charge type it "
+    "affects — not just its own main charge: a section can discount, exempt or surcharge "
+    "a charge that isn't its main subject. Also list every explicit reference you see "
+    "verbatim (a clause number, a section number, an annex name) and any of the book's "
+    "own metadata (authority, jurisdiction, ports, schedule name, effective dates, "
+    "currency) this window happens to state.\n\n"
+    "Answer only from the attached pages. If they're blank or unreadable, return no "
+    "sections rather than guessing."
 )
 
 
-def map_user_prompt(window_start: int, window_end: int, window_text: str) -> str:
-    return f"Pages {window_start}-{window_end} of a port tariff book:\n\n{window_text}"
+def map_user_prompt(window_start: int, window_end: int) -> str:
+    pages = list(range(window_start, window_end + 1))
+    return f"Pages {window_start}-{window_end} of a port tariff book are attached as a PDF.\n\n{_page_mapping_note(pages)}"
 
 
 EXTRACT_SYSTEM_PROMPT = (
     SCOPE_CONTRACT + "\n\n"
     "You are extracting a rate rule for exactly one canonical charge type "
-    "from the source text you are given. Decide one of four outcomes:\n"
+    "from the pages of the tariff book attached as a PDF. Decide one of four outcomes:\n"
     "- mapped: the charge exists here and its calculation can be represented "
     "as one of four fixed pricing shapes (per_unit, base_plus_increment, "
     "banded, base_plus_increment_times_duration). Your `pricing` field always "
@@ -95,16 +115,24 @@ EXTRACT_SYSTEM_PROMPT = (
     "separate rate quoted for each port by name) — if the latter, propose "
     "one rule per port, keyed by the port name exactly as this book spells "
     "it; do not average or pick just one port's column when the book gives "
-    "more than one.\n"
+    "more than one. A conditional surcharge, discount, or exemption on top "
+    "of the base rate (an after-hours fee, a per-additional-unit charge, a "
+    "delay fee, a coastal-status exemption) is never on its own a reason to "
+    "decide 'unmapped' or to leave the whole charge unrepresented — put the "
+    "base rate in `pricing` as above, and put every such condition in "
+    "`modifiers`: a plain percentage or flat amount when it's that simple, "
+    "or a verbatim quote of the source when it isn't. Only decide 'unmapped' "
+    "if the *base* calculation itself — not a modifier on top of it — "
+    "doesn't fit any of the four pricing shapes.\n"
     "- bundled: this charge is billed, but only as part of another charge — "
     "name which one. This is not the same as free or absent.\n"
     "- not_present: this book has no such charge. Do not force a match to "
     "the nearest thing you can find.\n"
-    "- unmapped: the charge exists and you understand it, but its "
+    "- unmapped: the charge exists and you understand it, but its *base* "
     "calculation logic does not fit any of the four pricing shapes — quote "
     "the source text instead of inventing a fifth shape.\n\n"
     "Every numeric value you report must be one that literally appears in "
-    "the text you were given, on the page you cite for it. Never invent a "
+    "the attached pages, on the page you cite for it. Never invent a "
     "value, and never carry over a value from any other tariff book. Cite "
     "the section number and page range your proposal comes from. List every "
     "section in your given context as used or dismissed, with a reason — "
@@ -117,8 +145,15 @@ EXTRACT_SYSTEM_PROMPT = (
 )
 
 
-def extract_user_prompt(charge: str, context_text: str) -> str:
-    return f"Canonical charge type to extract: {charge}\n\nYour context (assembled from the document):\n\n{context_text}"
+def extract_user_prompt(charge: str, pages: list[int] | None = None, notes: str = "", pages_attached: bool = True) -> str:
+    text = f"Canonical charge type to extract: {charge}\n\n"
+    if pages_attached:
+        text += "The relevant pages of this tariff book are attached as a PDF.\n\n" + _page_mapping_note(pages or [])
+    else:
+        text += "No relevant sections were found in this document for this charge."
+    if notes:
+        text += "\n\n---\n" + notes
+    return text
 
 
 VERIFY_SYSTEM_PROMPT = (

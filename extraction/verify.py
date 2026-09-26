@@ -18,12 +18,29 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from .llm import structured_call
 from .prompts import VERIFY_SYSTEM_PROMPT, verify_user_prompt
-from .schemas import CanonicalCharge, ChargeExtraction, SemanticOutcome, VerifierResult
+from .schemas import CanonicalCharge, ChargeExtraction, ProposedRule, SemanticOutcome, VerifierResult
 from .tools import make_tools
 
 MAX_VERIFY_TOOL_ROUNDS = 4
 DEFAULT_CONCURRENCY_LIMIT = 3  # see extraction/extract.py's DEFAULT_CONCURRENCY_LIMIT — same
 # reasoning, only relevant when this module is called directly, not through the graph.
+
+
+def _summarize_modifiers(rule: ProposedRule) -> str:
+    """Surfaced separately so a real modifier isn't invisible to Verify
+    — without this, Verify has no way to know a surcharge was already
+    captured in `modifiers` and would keep flagging it as missing."""
+    if not rule.modifiers:
+        return ""
+    lines = ["    Modifiers:"]
+    for m in rule.modifiers:
+        detail = (
+            f"{m.adjustment_percentage:+g}%" if m.adjustment_percentage is not None
+            else f"{m.adjustment_flat_amount:+g} flat" if m.adjustment_flat_amount is not None
+            else repr(m.raw_description)
+        )
+        lines.append(f"      - {m.condition}: {detail}")
+    return "\n" + "\n".join(lines)
 
 
 def _summarize_proposal(extraction: ChargeExtraction) -> str:
@@ -39,13 +56,13 @@ def _summarize_proposal(extraction: ChargeExtraction) -> str:
                 lines.append(
                     f"  {port}: pricing_type={rule.pricing_type}, basis={rule.basis.value}, "
                     f"multiplicity={rule.multiplicity.value}, params={rule.pricing_params}, "
-                    f"minimum={rule.minimum}, maximum={rule.maximum}"
+                    f"minimum={rule.minimum}, maximum={rule.maximum}{_summarize_modifiers(rule)}"
                 )
         elif extraction.proposed_rule:
             r = extraction.proposed_rule
             lines.append(
                 f"Rule: pricing_type={r.pricing_type}, basis={r.basis.value}, multiplicity={r.multiplicity.value}, "
-                f"params={r.pricing_params}, minimum={r.minimum}, maximum={r.maximum}"
+                f"params={r.pricing_params}, minimum={r.minimum}, maximum={r.maximum}{_summarize_modifiers(r)}"
             )
     elif extraction.outcome is SemanticOutcome.BUNDLED:
         lines.append(f"Claims this charge is included in: {extraction.included_in.value if extraction.included_in else '(unspecified)'}")
