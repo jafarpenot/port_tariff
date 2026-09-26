@@ -88,27 +88,38 @@ improve — stronger evidence than anything seen before this run.
 cannot change `outcome` away from `mapped` once already committed — it should
 only be allowed to fix the structure/content of the proposal it already made.
 
-## No field for conditional surcharges/modifiers on `ProposedRule`
+## ~~No field for conditional surcharges/modifiers on `ProposedRule`~~ — fixed
 
-Found on the same full TNPA run: `towage` and `light_dues` both stayed
-correctly mapped, but Verify found real content gaps that have nowhere to go
-in the schema today — towage's after-hours/additional-tug/late-arrival
-surcharges, light dues' 60-day South-African-waters/coastal-status rule.
-`tariffs/rules.py`'s own docstring names `modifiers` as the final stage of the
-intended vocabulary (`basis -> rounding -> pricing -> multiplicity -> time ->
-min/max -> modifiers`), but `ProposedRule` never grew a `modifiers` field —
-there's nowhere to put this information even for a model that reads it
-correctly. Same family as the compositional-pricing-vocabulary gap
-(towage's discrete per-tug table) discussed earlier — bigger, structural
-work, not a quick fix.
+Was here as an open item: `towage`'s after-hours/additional-tug/late-arrival
+surcharges (and, presumably, light dues' 60-day South-African-waters/
+coastal-status rule, not independently re-verified) had nowhere to go in the
+schema, so a model that read them correctly still had no field to put them
+in. `ProposedRule.modifiers` (a `condition` string plus exactly one of
+`adjustment_percentage`/`adjustment_flat_amount`/`raw_description`) fixes
+this — `raw_description` is the escape hatch for a surcharge that doesn't
+fit a plain percentage or flat amount (confirmed needed live: towage's
+Saldanha delay fee is priced per half-hour, not as either), so nothing about
+this schema forces a surcharge to block the base charge from reaching
+`mapped`. Live-verified on `towage`: outcome went from `unmapped` to
+`mapped`, with all 6 real surcharges captured.
 
-## Towage: rates extrapolated into cells the source marks "n/a"
+## ~~Towage: rates extrapolated into cells the source marks "n/a"~~ — resolved (and this doc's own facts were wrong)
 
-Also from the same run: several ports' bands were extended past where TNPA's
-book explicitly marks a cell "n/a" (East London, Mossel Bay, Durban, Port
-Elizabeth/Ngqura all affected in this run), and Saldanha's above-100,000-ton
-rate was wrong (27.97 instead of the real 38.71 — looks like the previous
-band's rate got carried forward instead of reading the actual cell). Not a
-schema gap — a real accuracy miss, plausibly improvable with a prompt-level
-instruction not to extrapolate a trend into a cell explicitly marked "n/a".
-Worth trying cheaply before considering anything more structural.
+Was here as an open item, naming East London, Mossel Bay, Durban, and Port
+Elizabeth/Ngqura as affected, and claiming Saldanha's real above-100,000-ton
+rate was 38.71. Re-checking those claims directly against the source PDF and
+`config/tariffs_2024_2025.yaml` while re-verifying this fix found **two of
+those five claims were themselves wrong**, inherited from the original run's
+Verify step: Durban is not marked "n/a" above 100,000 tons (it has a real
+rate, 23.65 — the original bug was a wrong value there, not extrapolation),
+and Port Elizabeth/Ngqura's flagged value (21.50) was already correct, not
+"n/a" as claimed. Saldanha's real rate is 47.32, not 38.71 (that figure was
+actually Cape Town's rate, misattributed).
+
+Re-verified live on `towage` after switching Map/Extract to native PDF input
+(fixes a two-column-layout text-scrambling bug) and adding `modifiers`
+(above): every one of the corrected values now comes back exactly right —
+East London and Mossel Bay both correctly `n/a` (no band above their real
+cutoff), Durban 23.65, Saldanha 47.32, Port Elizabeth/Ngqura still 21.50.
+Not fixed by anything targeted at this issue directly — a side effect of the
+two other fixes.
