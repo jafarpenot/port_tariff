@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from tariffs.rules import Basis, Multiplicity, RoundingMode, TimeRounding
+
 
 class CanonicalCharge(str, Enum):
     """specs/EXTRACTION_SPEC.md §3.1's six charge types, by function.
@@ -265,13 +267,13 @@ class ProposedRule(BaseModel):
     from tariffs/rules.py (basis / rounding / pricing / multiplicity /
     time / min-max)."""
 
-    basis: str
-    rounding_mode: str
+    basis: Basis
+    rounding_mode: RoundingMode
     rounding_unit: Optional[float] = None
     pricing: PricingShapes
-    multiplicity: str
+    multiplicity: Multiplicity
     time_unit_hours: Optional[float] = None
-    time_rounding: Optional[str] = None
+    time_rounding: Optional[TimeRounding] = None
     minimum: Optional[float] = None
     maximum: Optional[float] = None
 

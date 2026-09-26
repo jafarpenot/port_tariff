@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from extraction.schemas import (
     BandedShape,
     BasePlusIncrementShape,
@@ -55,13 +58,14 @@ def test_valid_banded_rule_passes():
     assert result.valid is True
 
 
-def test_unknown_basis_is_hard_and_lists_allowed_options():
-    rule = ProposedRule(basis="displacement", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")
-    result = validate_charge(_mapped(rule), PAGE_TEXTS)
-    assert result.valid is False
-    issue = next(i for i in result.issues if "basis" in i.message.lower())
-    assert issue.severity is ValidationSeverity.HARD
-    assert "gross_tonnage" in issue.allowed_options
+def test_unknown_basis_is_rejected_at_construction_not_at_validate_time():
+    """basis/rounding_mode/multiplicity are real enums on ProposedRule
+    (extraction/schemas.py) — an invalid value is now structurally
+    impossible to construct at all, same technique as pricing_type's own
+    closed-shape fix. Validate no longer needs to catch this after the
+    fact."""
+    with pytest.raises(ValidationError, match="basis"):
+        ProposedRule(basis="displacement", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")
 
 
 def test_ceil_to_unit_without_a_unit_is_hard():
@@ -185,7 +189,10 @@ def test_varies_by_port_one_bad_port_fails_and_names_the_port():
         charge=CanonicalCharge.VTS,
         outcome=SemanticOutcome.MAPPED,
         varies_by_port=True,
-        per_port_rules={"Durban": _rate_rule(0.65), "Cape Town": ProposedRule(basis="displacement", rounding_mode="exact", pricing=_per_unit(1.0), multiplicity="per_call")},
+        per_port_rules={
+            "Durban": _rate_rule(0.65),
+            "Cape Town": ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing=_per_unit(1.0), multiplicity="per_call"),  # missing rounding_unit
+        },
         provenance_pages=[2],
     )
     result = validate_charge(extraction, PAGE_TEXTS)

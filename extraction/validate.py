@@ -10,7 +10,7 @@ unmapped charges carry no rule to check.
 
 from __future__ import annotations
 
-from tariffs.rules import Basis, Multiplicity, PricingType, RoundingMode, RoundingSpec, TimeRounding
+from tariffs.rules import PricingType, RoundingMode, RoundingSpec
 from tariffs.schedule import Band
 from tariffs.shapes import banded_base_plus_increment, base_plus_increment, base_plus_increment_times_duration, per_unit_rate
 
@@ -29,21 +29,14 @@ def _warn(message: str) -> ValidationIssue:
 
 
 def _validate_enums(rule: ProposedRule) -> list[ValidationIssue]:
-    issues: list[ValidationIssue] = []
-    if rule.basis not in {b.value for b in Basis}:
-        issues.append(_hard(f"Unknown basis {rule.basis!r}", [b.value for b in Basis]))
-    if rule.rounding_mode not in {m.value for m in RoundingMode}:
-        issues.append(_hard(f"Unknown rounding mode {rule.rounding_mode!r}", [m.value for m in RoundingMode]))
-    elif rule.rounding_mode == RoundingMode.CEIL_TO_UNIT.value and not rule.rounding_unit:
-        issues.append(_hard("rounding_mode 'ceil_to_unit' requires a positive rounding_unit."))
-    # No "unknown pricing_type" check here any more: `rule.pricing` (a
-    # PricingShapes) makes that structurally impossible to construct —
-    # see extraction/schemas.py.
-    if rule.multiplicity not in {m.value for m in Multiplicity}:
-        issues.append(_hard(f"Unknown multiplicity {rule.multiplicity!r}", [m.value for m in Multiplicity]))
-    if rule.time_rounding is not None and rule.time_rounding not in {t.value for t in TimeRounding}:
-        issues.append(_hard(f"Unknown time_rounding {rule.time_rounding!r}", [t.value for t in TimeRounding]))
-    return issues
+    """`basis`/`rounding_mode`/`multiplicity`/`time_rounding` are real
+    enums on ProposedRule (extraction/schemas.py) — an invalid value is
+    now structurally impossible to construct, same as `pricing_type`
+    below. Only the one cross-field rule pydantic can't express
+    declaratively (CEIL_TO_UNIT needs a unit) is still checked here."""
+    if rule.rounding_mode is RoundingMode.CEIL_TO_UNIT and not rule.rounding_unit:
+        return [_hard("rounding_mode 'ceil_to_unit' requires a positive rounding_unit.")]
+    return []
 
 
 def _validate_band_structure(bands: list[dict]) -> list[ValidationIssue]:

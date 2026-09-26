@@ -37,14 +37,14 @@ def _summarize_proposal(extraction: ChargeExtraction) -> str:
             lines.append("Per-port rules:")
             for port, rule in extraction.per_port_rules.items():
                 lines.append(
-                    f"  {port}: pricing_type={rule.pricing_type}, basis={rule.basis}, "
-                    f"multiplicity={rule.multiplicity}, params={rule.pricing_params}, "
+                    f"  {port}: pricing_type={rule.pricing_type}, basis={rule.basis.value}, "
+                    f"multiplicity={rule.multiplicity.value}, params={rule.pricing_params}, "
                     f"minimum={rule.minimum}, maximum={rule.maximum}"
                 )
         elif extraction.proposed_rule:
             r = extraction.proposed_rule
             lines.append(
-                f"Rule: pricing_type={r.pricing_type}, basis={r.basis}, multiplicity={r.multiplicity}, "
+                f"Rule: pricing_type={r.pricing_type}, basis={r.basis.value}, multiplicity={r.multiplicity.value}, "
                 f"params={r.pricing_params}, minimum={r.minimum}, maximum={r.maximum}"
             )
     elif extraction.outcome is SemanticOutcome.BUNDLED:

@@ -26,7 +26,7 @@ from extraction.schemas import (
     WindowSection,
 )
 
-from .conftest import StubChatModel
+from .conftest import StubChatModel, make_blank_pdf, text_of
 
 PAGE_TEXTS = {
     1: "Acme Port Authority Tariff Book. Currency: ZAR.",
@@ -59,7 +59,7 @@ def _map_respond(user_text):
 def _run(llm, thread_id, verify_budget=VERIFY_BUDGET):
     graph = build_graph()
     config = {"configurable": {"thread_id": thread_id, "llm": llm, "repair_budget": REPAIR_BUDGET, "verify_budget": verify_budget}}
-    initial = {"pdf_path": "unused", "page_texts": PAGE_TEXTS}
+    initial = {"pdf_path": make_blank_pdf(), "page_texts": PAGE_TEXTS}
     result = graph.invoke(initial, config=config)
     return graph, result, config
 
@@ -67,7 +67,7 @@ def _run(llm, thread_id, verify_budget=VERIFY_BUDGET):
 def test_pipeline_runs_to_the_human_approval_interrupt_and_produces_a_clean_report():
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -100,7 +100,7 @@ def test_invalid_extraction_triggers_a_validate_repair_round_that_succeeds():
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -112,7 +112,7 @@ def test_invalid_extraction_triggers_a_validate_repair_round_that_succeeds():
                     return ChargeExtraction(
                         charge=CanonicalCharge.VTS,
                         outcome=SemanticOutcome.MAPPED,
-                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.5)), multiplicity="per_call"),
+                        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.5)), multiplicity="per_call"),
                         provenance_pages=[2],
                     )
                 return _good_vts_rule()
@@ -144,7 +144,7 @@ def test_verifier_material_finding_triggers_a_repair_that_resolves_it():
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -187,7 +187,7 @@ def test_verifier_disagreement_recorded_after_budget_exhausted_when_extractor_re
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -227,7 +227,7 @@ def test_verifier_minor_finding_does_not_trigger_a_repair():
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -256,7 +256,7 @@ def test_verifier_minor_finding_does_not_trigger_a_repair():
 def test_rejection_at_human_approval_is_recorded():
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -294,7 +294,7 @@ def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -309,7 +309,7 @@ def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_
                     return ChargeExtraction(
                         charge=CanonicalCharge.LIGHT_DUES,
                         outcome=SemanticOutcome.MAPPED,
-                        proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
+                        proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     )
                 return ChargeExtraction(
                     charge=CanonicalCharge.LIGHT_DUES,
@@ -364,7 +364,7 @@ def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_an
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -378,11 +378,11 @@ def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_an
                 n = port_dues_extract_attempts["n"]
                 # attempt 1: valid. attempt 2 (verify-repair): invalid.
                 # attempts 3-4 (validate-repair): invalid, then valid.
-                basis = "gross_tonnage" if n in (1, 4) else "displacement"
+                rounding_mode = "exact" if n in (1, 4) else "ceil_to_unit"  # ceil_to_unit with no rounding_unit -> invalid
                 return ChargeExtraction(
                     charge=CanonicalCharge.PORT_DUES,
                     outcome=SemanticOutcome.MAPPED,
-                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
+                    proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode=rounding_mode, pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     provenance_pages=[2],
                 )
             return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
@@ -426,7 +426,7 @@ def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not
 
     def respond(schema, messages):
         schema_name = schema.__name__
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -436,11 +436,11 @@ def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not
                 # Valid on the first pass; broken forever after (any
                 # verify-repair or validate-repair response is invalid).
                 is_repair = "adversarial reviewer" in user_text or "failed validation" in user_text
-                basis = "displacement" if is_repair else "gross_tonnage"
+                rounding_mode = "ceil_to_unit" if is_repair else "exact"  # ceil_to_unit with no rounding_unit -> invalid
                 return ChargeExtraction(
                     charge=CanonicalCharge.VTS,
                     outcome=SemanticOutcome.MAPPED,
-                    proposed_rule=ProposedRule(basis=basis, rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
+                    proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode=rounding_mode, pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
                     provenance_pages=[2],
                 )
             return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
@@ -453,7 +453,7 @@ def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not
     llm = StubChatModel(respond)
     graph = build_graph()
     config = {"configurable": {"thread_id": "thread-breaks-forever", "llm": llm, "repair_budget": REPAIR_BUDGET, "verify_budget": VERIFY_BUDGET}, "recursion_limit": 25}
-    result = graph.invoke({"pdf_path": "unused", "page_texts": PAGE_TEXTS}, config=config)
+    result = graph.invoke({"pdf_path": make_blank_pdf(), "page_texts": PAGE_TEXTS}, config=config)
 
     report = result["report"]
     vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
@@ -474,7 +474,7 @@ def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever
             return ChargeExtraction(
                 charge=CanonicalCharge.VTS,
                 outcome=SemanticOutcome.MAPPED,
-                proposed_rule=ProposedRule(basis="displacement", rounding_mode="exact", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
+                proposed_rule=ProposedRule(basis="gross_tonnage", rounding_mode="ceil_to_unit", pricing=PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), multiplicity="per_call"),
             )
         if schema_name == "VerifierResult":
             verify_was_called["called"] = True
