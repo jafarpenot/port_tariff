@@ -28,7 +28,7 @@ from extraction.schemas import (
     WindowSection,
 )
 
-from .conftest import StubChatModel
+from .conftest import StubChatModel, make_blank_pdf, text_of
 
 PAGE_TEXTS = {1: "Acme Port Authority Tariff Book. Currency: ZAR.", 2: "2.1 VTS dues. Rate 0.5 per GT, minimum 100."}
 CONTEXT = ChargeContext(charge=CanonicalCharge.VTS, section_numbers=["2.1"], combined_text=PAGE_TEXTS[2])
@@ -51,7 +51,7 @@ def test_process_charge_clean_first_pass_no_repairs_needed():
         raise AssertionError(schema.__name__)
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", log=lambda msg: None)
 
     assert outcome.status is None
     assert outcome.repair_attempts == 0
@@ -74,7 +74,7 @@ def test_process_charge_validate_repair_succeeds():
         raise AssertionError(schema.__name__)
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", log=lambda msg: None)
 
     assert outcome.repair_attempts == 1
     assert outcome.status is None
@@ -90,7 +90,7 @@ def test_process_charge_repair_budget_exhausted_is_extraction_failed():
         raise AssertionError(schema.__name__)
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, repair_budget=3, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", repair_budget=3, log=lambda msg: None)
 
     assert outcome.status is PipelineStatus.EXTRACTION_FAILED
     assert outcome.repair_attempts == 3
@@ -111,7 +111,7 @@ def test_process_charge_verify_repair_succeeds():
         raise AssertionError(schema.__name__)
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, verify_budget=1, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", verify_budget=1, log=lambda msg: None)
 
     assert outcome.verify_rounds == 1
     assert outcome.disagreement is None
@@ -127,7 +127,7 @@ def test_process_charge_verify_budget_exhausted_records_disagreement():
         raise AssertionError(schema.__name__)
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, verify_budget=1, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", verify_budget=1, log=lambda msg: None)
 
     assert outcome.verify_rounds == 1
     assert outcome.disagreement is not None
@@ -135,12 +135,71 @@ def test_process_charge_verify_budget_exhausted_records_disagreement():
     assert "still wrong" in outcome.disagreement.verifier_concern
 
 
+def test_verify_repair_that_reclassifies_away_from_mapped_is_rejected_and_retried():
+    """Regression test for a real bug found live (KNOWN_ISSUES.md): a
+    verify-repair call abandoned a correct `mapped` proposal instead of
+    fixing the narrow concern it was challenged on. The abandonment must
+    be rejected as an ordinary structural failure (HARD validation
+    issue, consumes the repair budget) and given one more chance to
+    restore `mapped`, rather than accepted."""
+    extract_attempts = {"n": 0}
+    verify_attempts = {"n": 0}
+
+    def respond(schema, messages):
+        if schema.__name__ == "ChargeExtraction":
+            extract_attempts["n"] += 1
+            if extract_attempts["n"] == 2:
+                return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.NOT_PRESENT)  # wrongly abandons mapped
+            return _mapped()
+        if schema.__name__ == "VerifierResult":
+            verify_attempts["n"] += 1
+            if verify_attempts["n"] == 1:
+                return VerifierResult(charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="missing surcharge", pages=[2])])
+            return VerifierResult(charge=CanonicalCharge.VTS, findings=[])
+        raise AssertionError(schema.__name__)
+
+    llm = StubChatModel(respond)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", verify_budget=1, repair_budget=3, log=lambda msg: None)
+
+    assert extract_attempts["n"] == 3  # 1st pass, wrongful reclassification, repair-of-the-regression
+    assert outcome.status is None
+    assert outcome.extraction.outcome is SemanticOutcome.MAPPED
+    assert outcome.repair_attempts == 1
+    assert outcome.disagreement is None
+    assert any("already committed as mapped" in i.message for h in outcome.validation_history for i in h.issues)
+
+
+def test_verify_repair_that_reclassifies_away_from_mapped_exhausts_repair_budget_honestly():
+    """If the model never restores `mapped` within budget (the sticky
+    guard fires on every round, not just the first flip), land on an
+    honest EXTRACTION_FAILED rather than silently accepting the
+    downgrade or wandering back into Verify with a wrong outcome."""
+    extract_attempts = {"n": 0}
+
+    def respond(schema, messages):
+        if schema.__name__ == "ChargeExtraction":
+            extract_attempts["n"] += 1
+            if extract_attempts["n"] == 1:
+                return _mapped()
+            return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.NOT_PRESENT)  # never recovers
+        if schema.__name__ == "VerifierResult":
+            return VerifierResult(charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="missing surcharge", pages=[2])])
+        raise AssertionError(schema.__name__)
+
+    llm = StubChatModel(respond)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", verify_budget=1, repair_budget=2, log=lambda msg: None)
+
+    assert outcome.status is PipelineStatus.EXTRACTION_FAILED
+    assert outcome.repair_attempts == 2
+    assert outcome.disagreement is None  # never reaches Verify again to record a disagreement
+
+
 def test_process_charge_exception_becomes_system_error_and_does_not_raise():
     def respond(schema, messages):
         raise RuntimeError("the model fundamentally failed")
 
     llm = StubChatModel(respond)
-    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, log=lambda msg: None)
+    outcome = process_charge(CanonicalCharge.VTS, CONTEXT, PAGE_TEXTS, llm, pdf_path="unused", log=lambda msg: None)
 
     assert outcome.status is PipelineStatus.SYSTEM_ERROR
     assert outcome.extraction is None
@@ -165,16 +224,17 @@ def test_run_pipeline_one_charge_exception_does_not_affect_the_others():
                 sections=[WindowSection(section_number="2.1", heading="VTS dues", section_type=SectionType.CHARGE, page=2, affects_charges=[CanonicalCharge.VTS])],
             )
         if name == "ChargeExtraction":
-            if "Canonical charge type to extract: towage" in messages[-1].content:
+            user_text = text_of(messages[-1].content)
+            if "Canonical charge type to extract: towage" in user_text:
                 raise RuntimeError("towage extraction fundamentally failed")
-            charge = CanonicalCharge.VTS if "vts" in messages[-1].content else None
+            charge = CanonicalCharge.VTS if "vts" in user_text else None
             return ChargeExtraction(charge=charge or CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
         if name == "VerifierResult":
             return VerifierResult(charge=CanonicalCharge.VTS, findings=[])
         raise AssertionError(name)
 
     llm = StubChatModel(respond)
-    report = run_pipeline("unused.pdf", llm, page_texts=PAGE_TEXTS, thread_id=None)
+    report = run_pipeline(make_blank_pdf(), llm, page_texts=PAGE_TEXTS, thread_id=None)
 
     assert len(report.charges) == 6
     by_charge = {e.charge: e for e in report.charges}

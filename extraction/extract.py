@@ -57,6 +57,11 @@ def _repair_note(issues: list[ValidationIssue]) -> str:
         if issue.allowed_options:
             line += f" (allowed: {issue.allowed_options})"
         lines.append(line)
+    lines.append(
+        "If your previous proposal's outcome was 'mapped', it must stay 'mapped' here — fix the "
+        "structure or content of that proposal, never reclassify it to bundled/not_present/unmapped "
+        "as a way of avoiding the problem above."
+    )
     return "\n".join(lines)
 
 
@@ -67,6 +72,10 @@ def _verifier_challenge_note(findings: list[VerifierFinding]) -> str:
     ]
     for finding in findings:
         lines.append(f"- ({finding.severity.value}) {finding.problem} [pages: {finding.pages}]")
+    lines.append(
+        "If your proposal's outcome was 'mapped', it must stay 'mapped' — correct the proposal's content "
+        "to address the concern, never reclassify it to bundled/not_present/unmapped instead of fixing it."
+    )
     lines.append(
         "If you agree, correct your proposal to address this — leave `rebuttal` unset. If you "
         "believe your original proposal is correct despite this challenge, set `rebuttal` to a "

@@ -42,6 +42,7 @@ from .schemas import (
     Disagreement,
     PipelineStatus,
     ReviewReport,
+    SemanticOutcome,
     ValidationIssue,
     ValidationResult,
     ValidationSeverity,
@@ -70,6 +71,28 @@ class ChargeOutcome:
         self.disagreement: Optional[Disagreement] = None
 
 
+def _outcome_regression_issue(new_outcome: SemanticOutcome) -> ValidationIssue:
+    """Confirmed live (KNOWN_ISSUES.md): a validate- or verify-repair call
+    can reclassify a charge's outcome away from `mapped` instead of
+    fixing its structure/content, since nothing previously constrained
+    it to keep the outcome it already committed to — cost two correctly
+    mapped charges their proposals in one run, over narrow concerns
+    (missing surcharges) neither warranted abandoning `mapped` for. Fed
+    back as a HARD validation issue so it flows through the same
+    repair-budget/exhaustion machinery as any other structural
+    failure — if the model can't restore `mapped` within budget, an
+    honest EXTRACTION_FAILED beats silently accepting the downgrade."""
+    return ValidationIssue(
+        severity=ValidationSeverity.HARD,
+        message=(
+            f"This charge was already committed as mapped, but this repair round's outcome is {new_outcome.value!r} "
+            "instead. A repair may only fix the structure/content of a proposal already mapped, never change "
+            "outcome away from it. Restore outcome to 'mapped' and address the original concern within the "
+            "proposal itself."
+        ),
+    )
+
+
 def _build_disagreement(charge: CanonicalCharge, extraction: ChargeExtraction, verify_result: VerifierResult) -> Disagreement:
     material = [f for f in verify_result.findings if f.severity is VerifierSeverity.MATERIAL]
     return Disagreement(
@@ -87,6 +110,7 @@ def process_charge(
     page_texts: dict[int, str],
     llm: Any,
     *,
+    pdf_path: str,
     verifier_llm: Any = None,
     repair_budget: int = REPAIR_BUDGET,
     verify_budget: int = VERIFY_BUDGET,
@@ -99,7 +123,11 @@ def process_charge(
     Verify or the report can see it) until either it's clean, its
     repair budget is exhausted (-> EXTRACTION_FAILED), or its verify
     budget is exhausted with a material finding still open (-> an
-    unresolved Disagreement, never forced to agree).
+    unresolved Disagreement, never forced to agree). Once a charge has
+    been mapped, a repair round is not allowed to reclassify it away
+    from mapped (see `_outcome_regression_issue`) — a real bug found
+    live, where a narrow verify concern led to abandoning a correct
+    proposal instead of fixing it.
 
     A raw exception (a model response that fails structured-output
     parsing on every retry — found live, killed a 28-minute run outright
@@ -111,7 +139,8 @@ def process_charge(
     verifier_llm = verifier_llm or llm
 
     try:
-        extraction = extract_charge(charge, context, page_texts, llm)
+        extraction = extract_charge(charge, context, page_texts, llm, pdf_path=pdf_path)
+        ever_mapped = extraction.outcome is SemanticOutcome.MAPPED
         repair_attempts = 0
         verify_rounds = 0
         verify_result = None
@@ -120,11 +149,22 @@ def process_charge(
 
         while True:
             if repair_issues is not None or verifier_findings is not None:
-                extraction = extract_charge(charge, context, page_texts, llm, repair_issues=repair_issues, verifier_findings=verifier_findings)
+                extraction = extract_charge(
+                    charge, context, page_texts, llm, pdf_path=pdf_path, repair_issues=repair_issues, verifier_findings=verifier_findings
+                )
                 repair_issues = None
                 verifier_findings = None
 
             validation = validate_charge(extraction, page_texts)
+            if ever_mapped and extraction.outcome is not SemanticOutcome.MAPPED:
+                # Sticky, not a one-shot check: once a charge has been mapped even
+                # once this run, every later round must stay mapped or be treated
+                # as a HARD failure -- not just the round where it first flips.
+                log(f"{charge.value}: repair round left outcome as {extraction.outcome.value!r} instead of mapped -- rejected")
+                validation.issues.append(_outcome_regression_issue(extraction.outcome))
+                validation.valid = False
+            elif extraction.outcome is SemanticOutcome.MAPPED:
+                ever_mapped = True
             outcome.validation_history.append(validation)
             log(f"{charge.value}: validate -> {'valid' if validation.valid else 'invalid'}")
 
@@ -191,7 +231,7 @@ def run_pipeline(
     identity = provisional_identity(page_texts, llm)
     log(f"identity: authority={identity.authority!r} currency={identity.currency!r}")
 
-    map_results = map_document(page_texts, llm, concurrency_limit=map_concurrency_limit)
+    map_results = map_document(page_texts, llm, pdf_path=pdf_path, concurrency_limit=map_concurrency_limit)
     total_sections = sum(len(w.sections) for w in map_results)
     log(f"map: {len(map_results)} windows, {total_sections} sections found")
 
@@ -211,7 +251,15 @@ def run_pipeline(
         context = assemble_result.charge_contexts[charge]
         log(f"{charge.value}: starting, context pages={context.pages} sections={context.section_numbers}")
         result = process_charge(
-            charge, context, page_texts, llm, verifier_llm=verifier_llm, repair_budget=repair_budget, verify_budget=verify_budget, log=log
+            charge,
+            context,
+            page_texts,
+            llm,
+            pdf_path=pdf_path,
+            verifier_llm=verifier_llm,
+            repair_budget=repair_budget,
+            verify_budget=verify_budget,
+            log=log,
         )
         if result.extraction is not None:
             extractions[charge] = result.extraction
