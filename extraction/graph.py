@@ -137,6 +137,7 @@ def node_map(state: PipelineState, config) -> dict:
     results = map_document(
         state["page_texts"],
         llm,
+        pdf_path=state["pdf_path"],
         window_size=_cfg(config, "window_size", DEFAULT_WINDOW_SIZE),
         overlap=_cfg(config, "overlap", DEFAULT_WINDOW_OVERLAP),
         concurrency_limit=_cfg(config, "concurrency_limit", DEFAULT_CONCURRENCY_LIMIT),
@@ -197,7 +198,7 @@ def node_extract(state: PipelineState, config) -> dict:
 
     if not existing:
         _log(state, config, "extract: first pass, all charges")
-        new_extractions = extract_all(contexts, state["page_texts"], llm, concurrency_limit=concurrency_limit)
+        new_extractions = extract_all(contexts, state["page_texts"], llm, pdf_path=state["pdf_path"], concurrency_limit=concurrency_limit)
         return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
 
     # Both repair kinds are handled in this same call — not an either/or
@@ -241,6 +242,7 @@ def node_extract(state: PipelineState, config) -> dict:
         to_repair,
         state["page_texts"],
         llm,
+        pdf_path=state["pdf_path"],
         concurrency_limit=concurrency_limit,
         repair_issues_by_charge=issues_by_charge,
         verifier_findings_by_charge=challenges,

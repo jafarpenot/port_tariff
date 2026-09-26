@@ -55,9 +55,9 @@ _RENDERED_PROMPTS = {
     "IDENTITY_SYSTEM_PROMPT": IDENTITY_SYSTEM_PROMPT,
     "identity_user_prompt": identity_user_prompt("placeholder opening pages text"),
     "MAP_SYSTEM_PROMPT": MAP_SYSTEM_PROMPT,
-    "map_user_prompt": map_user_prompt(1, 5, "placeholder window text"),
+    "map_user_prompt": map_user_prompt(1, 5),
     "EXTRACT_SYSTEM_PROMPT": EXTRACT_SYSTEM_PROMPT,
-    "extract_user_prompt": extract_user_prompt("light_dues", "placeholder context text"),
+    "extract_user_prompt": extract_user_prompt("light_dues", [5, 6, 7], "placeholder context text"),
     "VERIFY_SYSTEM_PROMPT": VERIFY_SYSTEM_PROMPT,
     "verify_user_prompt": verify_user_prompt("light_dues", "placeholder proposal summary", "placeholder tool findings"),
 }

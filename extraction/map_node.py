@@ -5,14 +5,23 @@ Default window: 5 pages, overlapping by 1 — specs/EXTRACTION_SPEC.md §6.1
 not repeated here). Window size and overlap stay configurable so the
 future-work window-size evaluation (§8/§9) can run at other sizes
 without a code change (§11).
+
+Each window is sent as a real PDF page range, not flattened text —
+found live: a book with a genuine two-column-per-page layout made
+pdfplumber's plain text extraction lossy on at least one rate table (a
+value silently dropped, not just harder to read), confirmed against
+this project's own hand-verified gold config and confirmed fixed by
+sending the actual pages instead.
 """
 
 from __future__ import annotations
 
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from .llm import structured_call
+from .pdf import extract_pdf_pages
 from .prompts import MAP_SYSTEM_PROMPT, map_user_prompt
 from .schemas import WindowMapResult
 
@@ -43,14 +52,20 @@ def window_ranges(n_pages: int, window_size: int = DEFAULT_WINDOW_SIZE, overlap:
     return ranges
 
 
-def _window_text(page_texts: dict[int, str], start: int, end: int) -> str:
-    return "\n\n".join(f"[page {p}]\n{page_texts.get(p, '')}" for p in range(start, end + 1))
+def _window_content(pdf_path: str, start: int, end: int) -> list:
+    pdf_bytes = extract_pdf_pages(pdf_path, list(range(start, end + 1)))
+    b64 = base64.b64encode(pdf_bytes).decode()
+    return [
+        {"type": "text", "text": map_user_prompt(start, end)},
+        {"type": "file", "source_type": "base64", "mime_type": "application/pdf", "data": b64, "filename": f"pages-{start}-{end}.pdf"},
+    ]
 
 
 def map_document(
     page_texts: dict[int, str],
     llm: Any,
     *,
+    pdf_path: str,
     window_size: int = DEFAULT_WINDOW_SIZE,
     overlap: int = DEFAULT_WINDOW_OVERLAP,
     concurrency_limit: int = DEFAULT_CONCURRENCY_LIMIT,
@@ -60,8 +75,8 @@ def map_document(
 
     def _call(page_range: tuple[int, int]) -> WindowMapResult:
         start, end = page_range
-        text = _window_text(page_texts, start, end)
-        result = structured_call(llm, WindowMapResult, MAP_SYSTEM_PROMPT, map_user_prompt(start, end, text))
+        content = _window_content(pdf_path, start, end)
+        result = structured_call(llm, WindowMapResult, MAP_SYSTEM_PROMPT, content)
         # The model's own echo of the range it covered is not trusted for
         # anything downstream — overwrite with the real range so a
         # confused model can't misreport which pages it actually saw.

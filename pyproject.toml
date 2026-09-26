@@ -33,6 +33,10 @@ extraction = [
     # Anthropic — a deliberate, extraction-only cost choice; the
     # calculator (tariffs/nlp.py) stays on langchain-anthropic.
     "langchain-openai>=0.2",
+    # extraction/pdf.py's extract_pdf_pages() slices real PDF pages for
+    # Map/Extract to attach natively — pdfplumber reads text, this writes
+    # a new PDF's bytes, a different job.
+    "pypdf>=5.0",
 ]
 
 [dependency-groups]

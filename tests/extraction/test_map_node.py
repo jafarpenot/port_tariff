@@ -1,7 +1,7 @@
 from extraction.map_node import DEFAULT_WINDOW_OVERLAP, DEFAULT_WINDOW_SIZE, map_document, window_ranges
 from extraction.schemas import SectionType, WindowMapResult, WindowSection
 
-from .conftest import StubChatModel
+from .conftest import StubChatModel, make_blank_pdf, text_of
 
 
 def test_window_ranges_defaults_cover_a_27_page_document_in_seven_windows():
@@ -46,14 +46,14 @@ def test_map_document_overwrites_the_models_own_page_echo():
         return WindowMapResult(window_start_page=999, window_end_page=999, sections=[])
 
     llm = StubChatModel(respond)
-    results = map_document({1: "a", 2: "b", 3: "c"}, llm, window_size=3, overlap=1)
+    results = map_document({1: "a", 2: "b", 3: "c"}, llm, pdf_path=make_blank_pdf(), window_size=3, overlap=1)
     assert len(results) == 1
     assert (results[0].window_start_page, results[0].window_end_page) == (1, 3)
 
 
 def test_map_document_routes_each_window_to_its_own_canned_response():
     def respond(schema, messages):
-        user_text = messages[-1].content
+        user_text = text_of(messages[-1].content)
         if "Pages 1-3" in user_text:
             return WindowMapResult(
                 window_start_page=1,
@@ -67,6 +67,6 @@ def test_map_document_routes_each_window_to_its_own_canned_response():
         )
 
     llm = StubChatModel(respond)
-    results = map_document({p: f"page {p}" for p in range(1, 6)}, llm, window_size=3, overlap=1, concurrency_limit=2)
+    results = map_document({p: f"page {p}" for p in range(1, 6)}, llm, pdf_path=make_blank_pdf(), window_size=3, overlap=1, concurrency_limit=2)
     headings = sorted(s.heading for r in results for s in r.sections)
     assert headings == ["A", "B"]

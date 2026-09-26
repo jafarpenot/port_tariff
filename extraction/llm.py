@@ -49,11 +49,18 @@ def _is_transient_error(exc: Exception) -> bool:
     return getattr(exc, "status_code", None) == 429 or isinstance(exc, ModelTimeoutError)
 
 
-def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: str) -> T:
+def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: str | list) -> T:
     """One structured-output call: system + user message in, a validated
-    instance of `schema` out. A stub `llm` for tests only needs to
-    implement `.with_structured_output(schema).invoke(messages)` —
-    the same minimal surface tariffs/nlp.py's tests already stub.
+    instance of `schema` out. `user_prompt` is usually plain text, but
+    Map/Extract pass a list of content blocks (langchain_core's standard
+    multimodal shape — a text block plus a `{"type": "file", ...}` PDF
+    attachment) to send real PDF pages instead of flattened text;
+    HumanMessage.content accepts either natively, so nothing else here
+    needs to know or care which one it got.
+
+    A stub `llm` for tests only needs to implement
+    `.with_structured_output(schema).invoke(messages)` — the same
+    minimal surface tariffs/nlp.py's tests already stub.
 
     Retries on a schema-validation failure (observed live: the model
     occasionally wraps its answer in a spurious extra key, or returns a
