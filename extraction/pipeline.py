@@ -208,8 +208,8 @@ def run_pipeline(
     disagreements: list[Disagreement] = []
 
     for charge in CanonicalCharge:
-        log(f"{charge.value}: starting")
         context = assemble_result.charge_contexts[charge]
+        log(f"{charge.value}: starting, context pages={context.pages} sections={context.section_numbers}")
         result = process_charge(
             charge, context, page_texts, llm, verifier_llm=verifier_llm, repair_budget=repair_budget, verify_budget=verify_budget, log=log
         )

@@ -86,6 +86,26 @@ def test_charge_context_includes_chapter_general_terms_and_references():
     assert "1.1" in light_dues_context.section_numbers  # implicit: same chapter's general terms
     assert "1.3" in light_dues_context.section_numbers  # explicit reference resolved
     assert "General conditions" in light_dues_context.combined_text
+    assert light_dues_context.pages == [1, 2, 3]  # every page behind that combined_text, for later diagnosis
+
+
+def test_charge_context_pages_covers_a_multi_page_section_span():
+    """A section seen at page 2 in one window and page 4 in another (an
+    overlap sighting at each end of a section that actually spans
+    2-4) must report the whole span, not just the pages any single
+    sighting happened to name — this is what lets a run's log answer
+    "was the page with the missing value even in Extract's context"."""
+    window = _window(
+        2,
+        4,
+        [
+            WindowSection(section_number="2.1", heading="Towage", section_type=SectionType.CHARGE, page=2, affects_charges=[CanonicalCharge.TOWAGE]),
+            WindowSection(section_number="2.1", heading="Towage", section_type=SectionType.CHARGE, page=4, affects_charges=[CanonicalCharge.TOWAGE]),
+        ],
+    )
+    sections = merge_sections([window], {2: "x", 3: "y", 4: "z"})
+    contexts = build_charge_contexts(sections)
+    assert contexts[CanonicalCharge.TOWAGE].pages == [2, 3, 4]  # page 3, in between, was never directly sighted
 
 
 def test_charge_never_mentioned_gets_an_empty_context_not_an_error():

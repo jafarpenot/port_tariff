@@ -118,6 +118,7 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
         relevant = [s for s in sections if charge in s.affects_charges]
         section_numbers: list[str] = []
         texts: list[str] = []
+        pages: set[int] = set()
         seen_keys: set[str] = set()
 
         def _add(section: AssembledSection) -> None:
@@ -128,6 +129,7 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
             if section.section_number:
                 section_numbers.append(section.section_number)
             texts.append(section.text)
+            pages.update(range(section.page_start, section.page_end + 1))
 
         for s in relevant:
             _add(s)
@@ -144,6 +146,7 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
         contexts[charge] = ChargeContext(
             charge=charge,
             section_numbers=section_numbers,
+            pages=sorted(pages),
             combined_text="\n\n".join(texts),
         )
     return contexts

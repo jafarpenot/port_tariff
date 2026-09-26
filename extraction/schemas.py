@@ -106,10 +106,16 @@ class AssembledSection(BaseModel):
 
 class ChargeContext(BaseModel):
     """A charge's focused context, assembled from the inventory —
-    Extract's input, never the whole document (§6.1 node 5)."""
+    Extract's input, never the whole document (§6.1 node 5). `pages`
+    (every page number whose text contributed to `combined_text`) is a
+    diagnostic, not something Extract reads: it exists so a run's log
+    can answer "was the page with the value Verify says is missing even
+    in Extract's context" directly, instead of guessing whether an
+    omission is a Map/Assemble miss or an Extract reasoning failure."""
 
     charge: CanonicalCharge
     section_numbers: list[str] = Field(default_factory=list)
+    pages: list[int] = Field(default_factory=list)
     combined_text: str
 
 
