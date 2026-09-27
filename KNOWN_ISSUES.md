@@ -219,3 +219,47 @@ East London and Mossel Bay both correctly `n/a` (no band above their real
 cutoff), Durban 23.65, Saldanha 47.32, Port Elizabeth/Ngqura still 21.50.
 Not fixed by anything targeted at this issue directly — a side effect of the
 two other fixes.
+
+## Experimental general pricing vocabulary (extraction/general_shapes.py) — evaluated, not yet adoptable
+
+Built to close a real, confirmed gap: RAK Ports' towage tariff is keyed by tug
+selection (Ghalilah/Hobby/.../Osprey), not any numeric basis range, so none
+of the four existing fixed pricing shapes — all keyed on a continuous
+numeric basis — can represent it at all (the existing path correctly comes
+back `unmapped` on it, with an honest explanation, not a wrong answer).
+`GeneralProposedRule`'s `KeyedBand`/`ValueFormula` (flat, or linear =
+base + rate × units) generalise `banded`'s GT-only key to any labelled
+dimension — a category name, a port, a GT range — without inventing a fully
+recursive pricing DSL.
+
+**Live-verified, both directions, same session:**
+- **RAK's tug table — a clear win.** `extract_charge_general()` returned
+  `mapped`, all 10 tugs correctly priced ($1,569–$6,516), `basis=hours`,
+  6 modifiers captured, zero structured-output validation errors. This is
+  exactly the case the existing shapes cannot touch, solved cleanly.
+- **TNPA's towage table — a regression, twice.** The same function on a case
+  the *existing* `extract_charge()` already handles reliably (this book's
+  own towage table, page 8) failed structured-output validation on both
+  independent attempts: some `flat`-kind bands came back missing
+  `flat_amount` entirely, and `GeneralModifier`'s "exactly one of adjustment/
+  adjustment_percentage/raw_description" was violated on the same cluster of
+  surcharge descriptions (after-hours, additional-tug, no-power, cancellation,
+  delay fee) both times — not random noise, a repeatable weak spot.
+
+**Conclusion: the vocabulary is sound, the current prompt isn't hardened
+enough to replace or run alongside the existing path yet.** The existing
+`EXTRACT_SYSTEM_PROMPT` reached its current reliability only after many
+rounds of live-found fixes this session (the rounding-unit concept, the
+modifiers escape hatch, the partial-unit billing instruction); the general
+path's prompt (`GENERAL_EXTRACT_SYSTEM_PROMPT`) hasn't had that same
+iteration yet — the expected state of a first version, not a dead end.
+
+**Recommended path, not built**: don't run the general path in place of the
+existing one. Try the existing `extract_charge()` first; only if *it*
+returns `unmapped` specifically because the base calculation doesn't fit
+any of the four shapes, retry with `extract_charge_general()`. That gets
+the proven path's reliability on the cases it already handles, and the new
+capability only for the categorical-table cases it structurally cannot
+represent — without exposing the not-yet-hardened general prompt to cases
+where the existing one already works well. Not wired into
+pipeline.py/graph.py in this pass.
