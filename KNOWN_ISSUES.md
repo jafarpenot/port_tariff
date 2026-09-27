@@ -2,6 +2,36 @@
 
 Found live, not yet fixed. Each entry states what's wrong, where, and why it matters.
 
+## ~~Table-of-contents mentions merged with the real section, exploding a charge's context~~ — fixed
+
+Found live on the window-notes redesign's first full-pipeline run, confirmed
+by reproducing it three times: `light_dues`' context ballooned to all 27
+pages and every section number in the document. Root cause: Map, reading the
+front-matter window, reported a phantom "section 6" sighting for the table
+of contents merely *listing* "Section 6 Drydocks...", with no real content
+behind it. `merge_sections` (correctly, per its own dedup logic — same
+`section_number` is assumed to mean the same real section) merged this
+phantom sighting with the *real* Section 6 heading many windows later,
+unioning their window bounds into one section spanning most of the
+document. `light_dues`' own DEFINITIONS section legitimately references
+"Section 6" in its text, and reference-resolution pulled this corrupted,
+artificially huge section straight into `light_dues`' context.
+
+Fixed at the source: `MAP_SYSTEM_PROMPT` now says explicitly that a
+table-of-contents or index mention naming a section is not a sighting of
+that section — only report one when its actual heading and content are on
+the attached pages. Live-verified against the exact reproducing conditions:
+`light_dues`' context dropped from all 27 pages to 11.
+
+**A smaller residual remains, accepted rather than fixed further**: DEFINITIONS'
+own generic cross-reference to "Section 6" still resolves to the real (now
+correctly-bounded) Drydocks section and pulls its pages into `light_dues`'
+context — the reference-following feature working as designed, not
+corruption. A defensible, bounded case of this codebase's own "flag it,
+cheap to over-include" bias, not the unbounded explosion this entry
+describes. Worth revisiting only if it turns out to meaningfully hurt
+extraction quality in practice.
+
 ## `tariffs/nlp.py` bypasses `tariffs/engine.py` entirely
 
 `tariffs/nlp.py`'s module docstring (line 8) claims `Parsed.call` "goes into the
