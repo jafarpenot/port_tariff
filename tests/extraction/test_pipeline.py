@@ -21,6 +21,7 @@ from extraction.schemas import (
     ProvisionalIdentity,
     SectionType,
     SemanticOutcome,
+    StructureScanResult,
     VerifierFinding,
     VerifierResult,
     VerifierSeverity,
@@ -215,6 +216,8 @@ def test_run_pipeline_one_charge_exception_does_not_affect_the_others():
 
     def respond(schema, messages):
         name = schema.__name__
+        if name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if name == "WindowMapResult":

@@ -36,6 +36,7 @@ from .map_node import map_document
 from .pdf import split_pdf
 from .report import build_report
 from .run_log import append_trace, finish_run, run_log_path, start_run
+from .structure_scan import scan_structure
 from .schemas import (
     CanonicalCharge,
     ChargeExtraction,
@@ -115,6 +116,7 @@ def process_charge(
     repair_budget: int = REPAIR_BUDGET,
     verify_budget: int = VERIFY_BUDGET,
     log: Any = print,
+    structure_notes: str = "",
 ) -> ChargeOutcome:
     """One charge, start to finish: extract, then alternate
     validate-repair and verify-repair (each re-extraction always goes
@@ -139,7 +141,7 @@ def process_charge(
     verifier_llm = verifier_llm or llm
 
     try:
-        extraction = extract_charge(charge, context, page_texts, llm, pdf_path=pdf_path)
+        extraction = extract_charge(charge, context, page_texts, llm, pdf_path=pdf_path, structure_notes=structure_notes)
         ever_mapped = extraction.outcome is SemanticOutcome.MAPPED
         repair_attempts = 0
         verify_rounds = 0
@@ -150,7 +152,14 @@ def process_charge(
         while True:
             if repair_issues is not None or verifier_findings is not None:
                 extraction = extract_charge(
-                    charge, context, page_texts, llm, pdf_path=pdf_path, repair_issues=repair_issues, verifier_findings=verifier_findings
+                    charge,
+                    context,
+                    page_texts,
+                    llm,
+                    pdf_path=pdf_path,
+                    repair_issues=repair_issues,
+                    verifier_findings=verifier_findings,
+                    structure_notes=structure_notes,
                 )
                 repair_issues = None
                 verifier_findings = None
@@ -212,7 +221,8 @@ def run_pipeline(
     map_concurrency_limit: int = 1,
     thread_id: Optional[str] = None,
 ) -> ReviewReport:
-    """Split -> Identity -> Map -> Assemble, then one charge at a time,
+    """Structure scan -> Split -> Identity -> Map -> Assemble, then one
+    charge at a time,
     fully sequential — no ThreadPoolExecutor anywhere in this call path.
     `map_concurrency_limit` defaults to 1 (not map_document's own
     default) to keep Map's own internal batching out of this pipeline's
@@ -227,11 +237,16 @@ def run_pipeline(
         print(f"[pipeline] {msg}", file=sys.stderr, flush=True)
         append_trace(log_path, msg)
 
+    structure_notes = scan_structure(pdf_path, llm)
+    log(f"structure_scan: {len(structure_notes)} chars")
+
     page_texts = page_texts or split_pdf(pdf_path)
-    identity = provisional_identity(page_texts, llm)
+    identity = provisional_identity(page_texts, llm, structure_notes=structure_notes)
     log(f"identity: authority={identity.authority!r} currency={identity.currency!r}")
 
-    map_results = map_document(page_texts, llm, pdf_path=pdf_path, concurrency_limit=map_concurrency_limit)
+    map_results = map_document(
+        page_texts, llm, pdf_path=pdf_path, concurrency_limit=map_concurrency_limit, structure_notes=structure_notes
+    )
     total_sections = sum(len(w.sections) for w in map_results)
     log(f"map: {len(map_results)} windows, {total_sections} sections found")
 
@@ -260,6 +275,7 @@ def run_pipeline(
             repair_budget=repair_budget,
             verify_budget=verify_budget,
             log=log,
+            structure_notes=structure_notes,
         )
         if result.extraction is not None:
             extractions[charge] = result.extraction

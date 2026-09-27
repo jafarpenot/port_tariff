@@ -34,6 +34,27 @@ SCOPE_CONTRACT = (
     "matching a title string.\n\n" + CANONICAL_CHARGES_TABLE
 )
 
+STRUCTURE_SCAN_SYSTEM_PROMPT = (
+    "You are looking at an entire port tariff book for the first time, before any "
+    "detailed reading — the same first glance a person would take to orient "
+    "themselves before searching for anything specific. Describe, in plain prose:\n"
+    "- How the document is organised: its overall structure, chapter/section "
+    "layout, and roughly where different kinds of content sit (e.g. definitions "
+    "near the front, rate tables in the middle, annexes at the end).\n"
+    "- Its table of contents, if it has one — list what it says, but note "
+    "explicitly that a table of contents' own page numbers may not match this "
+    "PDF's actual page numbers; do not treat them as reliable.\n"
+    "- Anything unusual about the layout that could trip up someone reading only "
+    "one page or a small range in isolation: multi-column pages, scanned or "
+    "image-only pages, inconsistent or duplicated page numbering, tables that "
+    "span multiple pages, rotated pages, or anything else out of the ordinary.\n\n"
+    "This is a first impression, not a verified fact-check — write it as advisory "
+    "orientation for someone about to read specific pages closely, not as a claim "
+    "about exact values or section numbers. If nothing is unusual about the "
+    "layout, say so briefly rather than inventing a concern."
+)
+
+
 IDENTITY_SYSTEM_PROMPT = (
     "You identify a tariff book's own metadata from its opening pages: the "
     "issuing authority, jurisdiction, the ports it covers, the schedule's name, "
@@ -42,6 +63,22 @@ IDENTITY_SYSTEM_PROMPT = (
     "not guess or infer from context, and do not use any tariff book you may "
     "have seen before as a source for this book's values."
 )
+
+
+def _structure_notes_block(structure_notes: str) -> str:
+    """Shared framing for the whole-document structure scan's notes,
+    wherever a prompt accepts them (Identity, Map, Extract) — always
+    advisory, never authoritative, same caution already established for
+    ToC page numbers: a description of the document written before
+    reading any specific page in detail can be wrong, and the actual
+    attached pages are always the real source of truth."""
+    if not structure_notes:
+        return ""
+    return (
+        "\n\n---\nNotes from an initial whole-document scan, for context only — "
+        "if this disagrees with what you actually see in your attached pages, "
+        "trust the attached pages, not these notes:\n" + structure_notes
+    )
 
 
 def _page_mapping_note(pages: list[int]) -> str:
@@ -58,13 +95,13 @@ def _page_mapping_note(pages: list[int]) -> str:
     return f"This attachment's page numbers do not start at 1. Mapping: {listing}. Always cite the book page number shown here, never the attachment's own page position."
 
 
-def identity_user_prompt(opening_pages_text: str) -> str:
+def identity_user_prompt(opening_pages_text: str, structure_notes: str = "") -> str:
     return (
         "Opening pages of a port tariff book:\n\n"
         f"{opening_pages_text}\n\n"
         "Report the authority, jurisdiction, ports covered, schedule name, "
         "effective dates and currency, using only what these pages state."
-    )
+    ) + _structure_notes_block(structure_notes)
 
 
 MAP_SYSTEM_PROMPT = (
@@ -91,9 +128,10 @@ MAP_SYSTEM_PROMPT = (
 )
 
 
-def map_user_prompt(window_start: int, window_end: int) -> str:
+def map_user_prompt(window_start: int, window_end: int, structure_notes: str = "") -> str:
     pages = list(range(window_start, window_end + 1))
-    return f"Pages {window_start}-{window_end} of a port tariff book are attached as a PDF.\n\n{_page_mapping_note(pages)}"
+    text = f"Pages {window_start}-{window_end} of a port tariff book are attached as a PDF.\n\n{_page_mapping_note(pages)}"
+    return text + _structure_notes_block(structure_notes)
 
 
 EXTRACT_SYSTEM_PROMPT = (
@@ -161,12 +199,15 @@ EXTRACT_SYSTEM_PROMPT = (
 )
 
 
-def extract_user_prompt(charge: str, pages: list[int] | None = None, notes: str = "", pages_attached: bool = True) -> str:
+def extract_user_prompt(
+    charge: str, pages: list[int] | None = None, notes: str = "", pages_attached: bool = True, structure_notes: str = ""
+) -> str:
     text = f"Canonical charge type to extract: {charge}\n\n"
     if pages_attached:
         text += "The relevant pages of this tariff book are attached as a PDF.\n\n" + _page_mapping_note(pages or [])
     else:
         text += "No relevant sections were found in this document for this charge."
+    text += _structure_notes_block(structure_notes)
     if notes:
         text += "\n\n---\n" + notes
     return text

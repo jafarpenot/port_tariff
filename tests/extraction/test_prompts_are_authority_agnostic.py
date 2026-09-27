@@ -13,6 +13,7 @@ from extraction.prompts import (
     EXTRACT_SYSTEM_PROMPT,
     IDENTITY_SYSTEM_PROMPT,
     MAP_SYSTEM_PROMPT,
+    STRUCTURE_SCAN_SYSTEM_PROMPT,
     VERIFY_SYSTEM_PROMPT,
     extract_user_prompt,
     identity_user_prompt,
@@ -52,6 +53,7 @@ _DENYLIST = [
 ]
 
 _RENDERED_PROMPTS = {
+    "STRUCTURE_SCAN_SYSTEM_PROMPT": STRUCTURE_SCAN_SYSTEM_PROMPT,
     "IDENTITY_SYSTEM_PROMPT": IDENTITY_SYSTEM_PROMPT,
     "identity_user_prompt": identity_user_prompt("placeholder opening pages text"),
     "MAP_SYSTEM_PROMPT": MAP_SYSTEM_PROMPT,

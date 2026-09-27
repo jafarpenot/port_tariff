@@ -62,6 +62,17 @@ class ProvisionalIdentity(BaseModel):
     )
 
 
+class StructureScanResult(BaseModel):
+    """Node 1 — Structure scan's output. A single free-text field, not a
+    rigid shape — the whole point of this node is to catch whatever
+    wasn't anticipated (an unusual layout, a misleading ToC), so a fixed
+    schema would defeat it. Wrapped in a one-field model only to reuse
+    structured_call()'s existing retry machinery; the field itself is
+    unconstrained prose."""
+
+    notes: str
+
+
 # ---------------------------------------------------------------------------
 # Node 3 — Map (one call per page window)
 # ---------------------------------------------------------------------------

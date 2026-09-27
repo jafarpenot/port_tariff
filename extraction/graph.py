@@ -47,6 +47,7 @@ from .schemas import (
     WindowMapResult,
     has_material_finding,
 )
+from .structure_scan import scan_structure
 from .validate import validate_all
 from .verify import verify_all
 
@@ -57,6 +58,7 @@ VERIFY_BUDGET = 1  # §6.7, configurable, max 2 — Verify's adversarial repair 
 class PipelineState(TypedDict, total=False):
     pdf_path: str
     run_started_at: float
+    structure_notes: str
 
     page_texts: dict[int, str]
     provisional_identity: Any
@@ -103,10 +105,24 @@ def _log(state: PipelineState, config, msg: str) -> None:
     append_trace(path, msg)
 
 
+def node_structure_scan(state: PipelineState, config) -> dict:
+    # The graph's new single entry point (never re-run on a resume after
+    # the human-approval interrupt, same guard node_split already uses
+    # for page_texts). Deliberately doesn't call _log() -- that computes
+    # the run's log path from state["run_started_at"], which node_split
+    # (still the one place that timestamps it) hasn't set yet this early;
+    # calling it here would risk two different log files for one run.
+    if state.get("structure_notes"):
+        return {}
+    llm = _cfg(config, "llm")
+    return {"structure_notes": scan_structure(state["pdf_path"], llm)}
+
+
 def node_split(state: PipelineState, config) -> dict:
-    # The graph's single entry point (never re-run on a resume after the
-    # human-approval interrupt) — the one place to timestamp "run started"
-    # for extraction/run_log.py's duration field, and to start the live
+    # Runs right after node_structure_scan (never re-run on a resume
+    # after the human-approval interrupt) — the one place to timestamp
+    # "run started" for extraction/run_log.py's duration field, and to
+    # start the live
     # log file immediately (not lazily on the first _log() call, which
     # only happens once node_extract runs — a crash during identity or
     # Map would otherwise leave no file at all).
@@ -127,7 +143,7 @@ def node_split(state: PipelineState, config) -> dict:
 
 def node_identity(state: PipelineState, config) -> dict:
     llm = _cfg(config, "llm")
-    identity = provisional_identity(state["page_texts"], llm)
+    identity = provisional_identity(state["page_texts"], llm, structure_notes=state.get("structure_notes", ""))
     _log(state, config, f"identity: authority={identity.authority!r} currency={identity.currency!r}")
     return {"provisional_identity": identity}
 
@@ -141,6 +157,7 @@ def node_map(state: PipelineState, config) -> dict:
         window_size=_cfg(config, "window_size", DEFAULT_WINDOW_SIZE),
         overlap=_cfg(config, "overlap", DEFAULT_WINDOW_OVERLAP),
         concurrency_limit=_cfg(config, "concurrency_limit", DEFAULT_CONCURRENCY_LIMIT),
+        structure_notes=state.get("structure_notes", ""),
     )
     total_sections = sum(len(w.sections) for w in results)
     _log(state, config, f"map: {len(results)} windows, {total_sections} sections found")
@@ -198,7 +215,14 @@ def node_extract(state: PipelineState, config) -> dict:
 
     if not existing:
         _log(state, config, "extract: first pass, all charges")
-        new_extractions = extract_all(contexts, state["page_texts"], llm, pdf_path=state["pdf_path"], concurrency_limit=concurrency_limit)
+        new_extractions = extract_all(
+            contexts,
+            state["page_texts"],
+            llm,
+            pdf_path=state["pdf_path"],
+            concurrency_limit=concurrency_limit,
+            structure_notes=state.get("structure_notes", ""),
+        )
         return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
 
     # Both repair kinds are handled in this same call — not an either/or
@@ -246,6 +270,7 @@ def node_extract(state: PipelineState, config) -> dict:
         concurrency_limit=concurrency_limit,
         repair_issues_by_charge=issues_by_charge,
         verifier_findings_by_charge=challenges,
+        structure_notes=state.get("structure_notes", ""),
     )
     merged = dict(existing)
     merged.update(repaired)
@@ -446,6 +471,7 @@ def node_human_approval(state: PipelineState, config) -> dict:
 
 def build_graph():
     graph = StateGraph(PipelineState)
+    graph.add_node("structure_scan", node_structure_scan)
     graph.add_node("split", node_split)
     graph.add_node("identity", node_identity)
     graph.add_node("map", node_map)
@@ -457,7 +483,8 @@ def build_graph():
     graph.add_node("report", node_report)
     graph.add_node("human_approval", node_human_approval)
 
-    graph.set_entry_point("split")
+    graph.set_entry_point("structure_scan")
+    graph.add_edge("structure_scan", "split")
     graph.add_edge("split", "identity")
     graph.add_edge("identity", "map")
     graph.add_edge("map", "assemble")

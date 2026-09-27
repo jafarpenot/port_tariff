@@ -20,3 +20,17 @@ def test_provisional_identity_only_sees_opening_pages():
     assert "definitely not opening" not in seen["user_text"]  # beyond OPENING_PAGES_COUNT
     assert OPENING_PAGES_COUNT == 3
     assert "cover page" in seen["user_text"]
+
+
+def test_provisional_identity_folds_in_structure_notes_as_advisory_context():
+    seen = {}
+
+    def respond(schema, messages):
+        seen["user_text"] = messages[-1].content
+        return ProvisionalIdentity(authority="Acme Port Authority")
+
+    llm = StubChatModel(respond)
+    provisional_identity({1: "cover page"}, llm, structure_notes="This book's metadata sits on its final page.")
+
+    assert "This book's metadata sits on its final page." in seen["user_text"]
+    assert "for context only" in seen["user_text"]  # advisory framing, never authoritative

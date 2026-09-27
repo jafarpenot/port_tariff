@@ -85,13 +85,17 @@ def _verifier_challenge_note(findings: list[VerifierFinding]) -> str:
     return "\n".join(lines)
 
 
-def _charge_content(charge: CanonicalCharge, context: ChargeContext, pdf_path: str, notes: str = "") -> str | list:
+def _charge_content(
+    charge: CanonicalCharge, context: ChargeContext, pdf_path: str, notes: str = "", structure_notes: str = ""
+) -> str | list:
     """The pages behind this charge's context (`context.pages`), sliced
     from the real PDF and attached natively — or plain text alone if
     Map never found any relevant pages for this charge at all (a valid,
     expected case: a charge genuinely absent from the book), since
     there'd be nothing to attach."""
-    text = extract_user_prompt(charge.value, context.pages, notes, pages_attached=bool(context.pages))
+    text = extract_user_prompt(
+        charge.value, context.pages, notes, pages_attached=bool(context.pages), structure_notes=structure_notes
+    )
     if not context.pages:
         return text
     pdf_bytes = extract_pdf_pages(pdf_path, context.pages)
@@ -103,7 +107,7 @@ def _charge_content(charge: CanonicalCharge, context: ChargeContext, pdf_path: s
 
 
 def _run_tool_rounds(
-    charge: CanonicalCharge, context: ChargeContext, pdf_path: str, page_texts: dict[int, str], llm: Any
+    charge: CanonicalCharge, context: ChargeContext, pdf_path: str, page_texts: dict[int, str], llm: Any, structure_notes: str = ""
 ) -> tuple[list[str], list[str], set[int]]:
     """Returns the leads followed (human-readable strings), the tool
     *results* (folded into the final call's notes text by the caller),
@@ -118,7 +122,7 @@ def _run_tool_rounds(
 
     messages = [
         SystemMessage(content=EXTRACT_SYSTEM_PROMPT),
-        HumanMessage(content=_charge_content(charge, context, pdf_path)),
+        HumanMessage(content=_charge_content(charge, context, pdf_path, structure_notes=structure_notes)),
     ]
     leads: list[str] = []
     tool_results: list[str] = []
@@ -151,8 +155,9 @@ def extract_charge(
     pdf_path: str,
     repair_issues: list[ValidationIssue] | None = None,
     verifier_findings: list[VerifierFinding] | None = None,
+    structure_notes: str = "",
 ) -> ChargeExtraction:
-    leads, tool_results, extra_pages = _run_tool_rounds(charge, context, pdf_path, page_texts, llm)
+    leads, tool_results, extra_pages = _run_tool_rounds(charge, context, pdf_path, page_texts, llm, structure_notes)
     notes = ""
     if tool_results:
         notes += "Followed a lead outside your original context:\n" + "\n\n".join(tool_results)
@@ -166,7 +171,10 @@ def extract_charge(
         final_context = context.model_copy(update={"pages": sorted(set(context.pages) | extra_pages)})
 
     extraction = structured_call(
-        llm, ChargeExtraction, EXTRACT_SYSTEM_PROMPT, _charge_content(charge, final_context, pdf_path, notes)
+        llm,
+        ChargeExtraction,
+        EXTRACT_SYSTEM_PROMPT,
+        _charge_content(charge, final_context, pdf_path, notes, structure_notes),
     )
     extraction.charge = charge  # the request, not the model's own echo, is authoritative
     if leads:
@@ -190,6 +198,7 @@ def extract_all(
     concurrency_limit: int = DEFAULT_CONCURRENCY_LIMIT,
     repair_issues_by_charge: dict[CanonicalCharge, list[ValidationIssue]] | None = None,
     verifier_findings_by_charge: dict[CanonicalCharge, list[VerifierFinding]] | None = None,
+    structure_notes: str = "",
 ) -> dict[CanonicalCharge, ChargeExtraction]:
     """Charges in `repair_issues_by_charge` get that charge's specific
     validation errors folded into the prompt (§6.5's repair round);
@@ -212,6 +221,7 @@ def extract_all(
             pdf_path=pdf_path,
             repair_issues=repairs.get(charge),
             verifier_findings=challenges.get(charge),
+            structure_notes=structure_notes,
         )
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency_limit)) as pool:

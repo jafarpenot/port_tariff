@@ -100,3 +100,19 @@ def test_map_document_routes_each_window_to_its_own_canned_response():
     results = map_document({p: f"page {p}" for p in range(1, 6)}, llm, pdf_path=make_blank_pdf(), window_size=3, overlap=1, concurrency_limit=2)
     headings = sorted(s.heading for r in results for s in r.sections)
     assert headings == ["A", "B"]
+
+
+def test_map_document_folds_in_structure_notes_as_advisory_context():
+    seen = {}
+
+    def respond(schema, messages):
+        seen["user_text"] = text_of(messages[-1].content)
+        return WindowMapResult(window_start_page=999, window_end_page=999, sections=[])
+
+    llm = StubChatModel(respond)
+    map_document(
+        {1: "a", 2: "b", 3: "c"}, llm, pdf_path=make_blank_pdf(), window_size=3, overlap=1, structure_notes="A two-column layout throughout."
+    )
+
+    assert "A two-column layout throughout." in seen["user_text"]
+    assert "for context only" in seen["user_text"]

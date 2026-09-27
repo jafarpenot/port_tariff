@@ -78,11 +78,11 @@ def _corrected_sections(section: WindowSection, start: int, end: int) -> list[Wi
     return [section.model_copy(update={"page": nearer})]
 
 
-def _window_content(pdf_path: str, start: int, end: int) -> list:
+def _window_content(pdf_path: str, start: int, end: int, structure_notes: str = "") -> list:
     pdf_bytes = extract_pdf_pages(pdf_path, list(range(start, end + 1)))
     b64 = base64.b64encode(pdf_bytes).decode()
     return [
-        {"type": "text", "text": map_user_prompt(start, end)},
+        {"type": "text", "text": map_user_prompt(start, end, structure_notes)},
         {"type": "file", "source_type": "base64", "mime_type": "application/pdf", "data": b64, "filename": f"pages-{start}-{end}.pdf"},
     ]
 
@@ -95,13 +95,14 @@ def map_document(
     window_size: int = DEFAULT_WINDOW_SIZE,
     overlap: int = DEFAULT_WINDOW_OVERLAP,
     concurrency_limit: int = DEFAULT_CONCURRENCY_LIMIT,
+    structure_notes: str = "",
 ) -> list[WindowMapResult]:
     n_pages = max(page_texts) if page_texts else 0
     ranges = window_ranges(n_pages, window_size, overlap)
 
     def _call(page_range: tuple[int, int]) -> WindowMapResult:
         start, end = page_range
-        content = _window_content(pdf_path, start, end)
+        content = _window_content(pdf_path, start, end, structure_notes)
         result = structured_call(llm, WindowMapResult, MAP_SYSTEM_PROMPT, content)
         # The model's own echo of the range it covered is not trusted for
         # anything downstream — overwrite with the real range so a

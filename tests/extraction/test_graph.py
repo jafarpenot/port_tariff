@@ -19,6 +19,7 @@ from extraction.schemas import (
     ProvisionalIdentity,
     SectionType,
     SemanticOutcome,
+    StructureScanResult,
     VerifierFinding,
     VerifierResult,
     VerifierSeverity,
@@ -68,6 +69,8 @@ def test_pipeline_runs_to_the_human_approval_interrupt_and_produces_a_clean_repo
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -101,6 +104,8 @@ def test_invalid_extraction_triggers_a_validate_repair_round_that_succeeds():
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -145,6 +150,8 @@ def test_verifier_material_finding_triggers_a_repair_that_resolves_it():
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -188,6 +195,8 @@ def test_verifier_disagreement_recorded_after_budget_exhausted_when_extractor_re
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -228,6 +237,8 @@ def test_verifier_minor_finding_does_not_trigger_a_repair():
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -257,6 +268,8 @@ def test_rejection_at_human_approval_is_recorded():
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -295,6 +308,8 @@ def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -365,6 +380,8 @@ def test_an_already_repaired_verify_challenge_does_not_get_re_extracted_while_an
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -427,6 +444,8 @@ def test_a_charge_that_breaks_after_a_verify_finding_and_never_recovers_does_not
     def respond(schema, messages):
         schema_name = schema.__name__
         user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
         if schema_name == "WindowMapResult":
@@ -466,6 +485,8 @@ def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever
 
     def respond(schema, messages):
         schema_name = schema.__name__
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority")
         if schema_name == "WindowMapResult":

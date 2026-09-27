@@ -19,6 +19,27 @@ def _context(charge, text="Some section text.", section_numbers=None):
     return ChargeContext(charge=charge, section_numbers=section_numbers or ["1.1"], combined_text=text)
 
 
+def test_extract_charge_folds_in_structure_notes_as_advisory_context():
+    seen = {}
+
+    def respond(schema, messages):
+        seen["content"] = messages[-1].content
+        return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+
+    llm = StubChatModel(respond)
+    extract_charge(
+        CanonicalCharge.LIGHT_DUES,
+        _context(CanonicalCharge.LIGHT_DUES),
+        {1: "text"},
+        llm,
+        pdf_path="unused",
+        structure_notes="A two-column layout throughout.",
+    )
+
+    assert "A two-column layout throughout." in seen["content"]
+    assert "for context only" in seen["content"]
+
+
 def test_extract_charge_with_no_tool_calls_returns_the_structured_answer():
     def respond(schema, messages):
         return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)

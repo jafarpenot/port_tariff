@@ -15,8 +15,10 @@ from .schemas import ProvisionalIdentity
 OPENING_PAGES_COUNT = 3
 
 
-def provisional_identity(page_texts: dict[int, str], llm: Any) -> ProvisionalIdentity:
+def provisional_identity(page_texts: dict[int, str], llm: Any, *, structure_notes: str = "") -> ProvisionalIdentity:
     opening_pages = "\n\n".join(
         f"[page {p}]\n{page_texts[p]}" for p in sorted(page_texts) if p <= OPENING_PAGES_COUNT and page_texts[p]
     )
-    return structured_call(llm, ProvisionalIdentity, IDENTITY_SYSTEM_PROMPT, identity_user_prompt(opening_pages))
+    return structured_call(
+        llm, ProvisionalIdentity, IDENTITY_SYSTEM_PROMPT, identity_user_prompt(opening_pages, structure_notes)
+    )
