@@ -2,6 +2,40 @@
 
 Found live, not yet fixed. Each entry states what's wrong, where, and why it matters.
 
+## graph.py has no per-charge exception isolation — reconfirmed live on the Pattern B port's own verification run
+
+Not a new bug, and not caused by today's graph.py work — this is the exact
+pre-existing gap `pipeline.py` was originally built to fix (see that
+module's own docstring): `node_extract()`'s `extract_all()` call has no
+try/except around each charge, so one charge's structured-output parsing
+failure (after exhausting `structured_call()`'s retries) propagates and
+kills the entire `graph.invoke()` run, discarding every other charge's
+already-good progress.
+
+**Confirmed live** while verifying today's Pattern B port (the sticky
+"can't reclassify away from mapped" guard, ported from `pipeline.py` —
+see the fixed entry above): the guard's own logic ran correctly through
+several rounds (a validate-repair resolved `towage`, Verify correctly
+flagged 5 of 6 charges, a verify-repair round started) before the run
+crashed on `pilotage`'s Durban cancellation-fee modifier hitting the same
+"exactly one of adjustment_percentage/adjustment_flat_amount/raw_description"
+violation seen elsewhere in this document (pilotage/light_dues SYSTEM_ERRORs
+on `pipeline.py`) — a pre-existing structured-output reliability gap, not
+something the guard introduced. `pipeline.py`'s own per-charge
+try/except correctly isolates this same failure mode to a single
+`SYSTEM_ERROR`, confirmed live the same session; `graph.py` has no
+equivalent.
+
+**To fix, if graph.py is ever brought back into active use**: wrap each
+charge's `extract_charge()` call inside `extract_all()`'s `_call()`
+closure (or `node_extract()` itself) in a try/except, recording a
+per-charge `SYSTEM_ERROR`-equivalent status in `PipelineState` instead of
+letting the exception propagate — the same fix `pipeline.py` already has,
+ported the same way Pattern B's guard was. Not attempted here: per this
+session's established scope, only `pipeline.py` is actively maintained;
+`graph.py` gets shared-function fixes for free but not its own
+architectural changes unless specifically requested.
+
 ## ~~Table-of-contents mentions merged with the real section, exploding a charge's context~~ — fixed
 
 Found live on the window-notes redesign's first full-pipeline run, confirmed
