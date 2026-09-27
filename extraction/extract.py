@@ -94,7 +94,12 @@ def _charge_content(
     expected case: a charge genuinely absent from the book), since
     there'd be nothing to attach."""
     text = extract_user_prompt(
-        charge.value, context.pages, notes, pages_attached=bool(context.pages), structure_notes=structure_notes
+        charge.value,
+        context.pages,
+        notes,
+        pages_attached=bool(context.pages),
+        structure_notes=structure_notes,
+        map_notes=context.notes,
     )
     if not context.pages:
         return text

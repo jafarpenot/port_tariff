@@ -27,7 +27,7 @@ from extraction.schemas import (
     WindowSection,
 )
 
-from .conftest import StubChatModel, make_blank_pdf, text_of
+from .conftest import StubChatModel, make_blank_pdf, make_charge_notes, text_of
 
 PAGE_TEXTS = {
     1: "Acme Port Authority Tariff Book. Currency: ZAR.",
@@ -52,9 +52,10 @@ def _map_respond(user_text):
         return WindowMapResult(
             window_start_page=1,
             window_end_page=3,
-            sections=[WindowSection(section_number="2.1", heading="VTS dues", section_type=SectionType.CHARGE, page=2, affects_charges=[CanonicalCharge.VTS])],
+            sections=[WindowSection(section_number="2.1", heading="VTS dues", section_type=SectionType.CHARGE, affects_charges=[CanonicalCharge.VTS])],
+            charge_notes=make_charge_notes({CanonicalCharge.VTS: "VTS dues rate table."}),
         )
-    return WindowMapResult(window_start_page=1, window_end_page=3, sections=[])
+    return WindowMapResult(window_start_page=1, window_end_page=3, sections=[], charge_notes=make_charge_notes())
 
 
 def _run(llm, thread_id, verify_budget=VERIFY_BUDGET):
@@ -490,7 +491,7 @@ def test_permanently_invalid_extraction_exhausts_the_validate_budget_before_ever
         if schema_name == "ProvisionalIdentity":
             return ProvisionalIdentity(authority="Acme Port Authority")
         if schema_name == "WindowMapResult":
-            return WindowMapResult(window_start_page=1, window_end_page=3, sections=[])
+            return WindowMapResult(window_start_page=1, window_end_page=3, sections=[], charge_notes=make_charge_notes())
         if schema_name == "ChargeExtraction":
             return ChargeExtraction(
                 charge=CanonicalCharge.VTS,

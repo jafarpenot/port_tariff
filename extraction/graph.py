@@ -165,7 +165,7 @@ def node_map(state: PipelineState, config) -> dict:
 
 
 def node_assemble(state: PipelineState, config) -> dict:
-    result = assemble(state["map_results"], state["provisional_identity"], state["page_texts"])
+    result = assemble(state["map_results"], state["provisional_identity"])
     _log(state, config, f"assemble: {len(result.out_of_scope_sections)} out-of-scope sections, general_terms_found={result.general_terms_found}")
     return {"assemble_result": result}
 

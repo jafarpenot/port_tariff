@@ -79,10 +79,18 @@ class StructureScanResult(BaseModel):
 
 
 class WindowSection(BaseModel):
+    """No `page` field — found live, repeatedly: a model's per-section
+    page citation is unreliable even *within* its own window's valid
+    range (confirmed on the real TNPA book: one section cited 2 pages
+    off, another 1 page off, in the same window, no out-of-range value
+    to catch). Downstream (Assemble) now trusts only the window's own
+    bounds — ground truth, verified — never a per-section citation. Not
+    asking for one at all removes both the failure mode and a field
+    that could only ever confuse the model."""
+
     section_number: Optional[str] = None
     heading: str
     section_type: SectionType
-    page: int = Field(description="The page this section's heading appears on, using this attachment's own given page numbering.")
     affects_charges: list[CanonicalCharge] = Field(
         default_factory=list,
         description="Every canonical charge this section sets, modifies, exempts, discounts or surcharges — not just its own main charge.",
@@ -92,13 +100,38 @@ class WindowSection(BaseModel):
     )
 
 
+class ChargeWindowNote(BaseModel):
+    """Per window, per canonical charge — Map's real output, more than
+    the section inventory above: not just *whether* a charge is
+    discussed here, but a paragraph on *what's here and what kind of
+    information it is* (a base rate table, surcharges only, an
+    exemption, a cross-reference elsewhere, or nothing at all). This is
+    what Extract actually gets handed as orientation before reading the
+    attached pages — worth a real paragraph, not a sentence, since it's
+    the one summary of this window's content Extract will see before
+    diving in."""
+
+    charge: CanonicalCharge
+    present: bool = Field(description="Is this charge discussed at all in these pages — a base rate, a surcharge, an exemption, or a cross-reference?")
+    notes: str = Field(description="A paragraph on what's here and what kind of information it is. If not present, say so briefly rather than leaving this thin.")
+
+
 class WindowMapResult(BaseModel):
     """One Map call's structured output."""
 
     window_start_page: int
     window_end_page: int
     sections: list[WindowSection] = Field(default_factory=list)
+    charge_notes: list[ChargeWindowNote] = Field(default_factory=list)
     metadata_found: ProvisionalIdentity = Field(default_factory=ProvisionalIdentity)
+
+    @model_validator(mode="after")
+    def _charge_notes_cover_every_canonical_charge(self) -> "WindowMapResult":
+        seen = {note.charge for note in self.charge_notes}
+        missing = [c.value for c in CanonicalCharge if c not in seen]
+        if missing:
+            raise ValueError(f"charge_notes must cover every canonical charge; missing {missing!r}")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -107,29 +140,37 @@ class WindowMapResult(BaseModel):
 
 
 class AssembledSection(BaseModel):
+    """`window_start_page`/`window_end_page` name what these actually
+    are now: the bounds of the window(s) a section was sighted in, not
+    a per-section page range — Assemble no longer derives anything from
+    WindowSection's own (removed) page citation, only from the window
+    call's own verified bounds."""
+
     section_number: Optional[str] = None
     heading: str
     section_type: SectionType
-    page_start: int
-    page_end: int
+    window_start_page: int
+    window_end_page: int
     affects_charges: list[CanonicalCharge] = Field(default_factory=list)
     references: list[str] = Field(default_factory=list)
-    text: str
 
 
 class ChargeContext(BaseModel):
     """A charge's focused context, assembled from the inventory —
     Extract's input, never the whole document (§6.1 node 5). `pages`
-    (every page number whose text contributed to `combined_text`) is a
-    diagnostic, not something Extract reads: it exists so a run's log
-    can answer "was the page with the value Verify says is missing even
-    in Extract's context" directly, instead of guessing whether an
-    omission is a Map/Assemble miss or an Extract reasoning failure."""
+    (every page in every window relevant to this charge) is a
+    diagnostic, not something Extract reads directly: it exists so a
+    run's log can answer "was the page with the value Verify says is
+    missing even in Extract's context" directly, instead of guessing
+    whether an omission is a Map/Assemble miss or an Extract reasoning
+    failure. `notes` is what Extract actually reads as orientation —
+    the concatenated per-window ChargeWindowNote paragraphs relevant to
+    this charge, advisory only, same as structure_notes."""
 
     charge: CanonicalCharge
     section_numbers: list[str] = Field(default_factory=list)
     pages: list[int] = Field(default_factory=list)
-    combined_text: str
+    notes: str = ""
 
 
 # ---------------------------------------------------------------------------

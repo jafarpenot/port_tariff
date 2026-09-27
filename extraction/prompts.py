@@ -90,9 +90,28 @@ def _page_mapping_note(pages: list[int]) -> str:
     downstream page citation. Spelled out explicitly and per-page rather
     than as a single offset, since Extract's attachments are not always
     a contiguous range (ChargeContext.pages can skip pages Map didn't
-    flag)."""
+    flag). Map itself no longer needs this — it doesn't cite pages at
+    all any more (see WindowSection/ChargeWindowNote in schemas.py) —
+    but Extract still does, for `provenance_pages`."""
     listing = ", ".join(f"attachment page {i} = book page {p}" for i, p in enumerate(pages, start=1))
     return f"This attachment's page numbers do not start at 1. Mapping: {listing}. Always cite the book page number shown here, never the attachment's own page position."
+
+
+def _map_notes_block(map_notes: str) -> str:
+    """Map's own per-window, per-charge paragraphs (ChargeWindowNote),
+    concatenated across every window relevant to this charge — advisory
+    orientation before reading the attached pages in detail, same
+    "trust the attached pages if they disagree" caution as
+    structure_notes. Distinct block/wording so it's never confused with
+    the whole-document structure scan — this is specifically about the
+    one charge being extracted."""
+    if not map_notes:
+        return ""
+    return (
+        "\n\n---\nNotes from the mapping pass that selected these pages for this charge, for context "
+        "only — if this disagrees with what you actually see in the attached pages, trust the "
+        "attached pages, not these notes:\n" + map_notes
+    )
 
 
 def identity_user_prompt(opening_pages_text: str, structure_notes: str = "") -> str:
@@ -108,29 +127,41 @@ MAP_SYSTEM_PROMPT = (
     SCOPE_CONTRACT + "\n\n"
     "Your goal: find everything in this page range that could affect what a vessel is "
     "actually charged for one of the six canonical charges above. This is the only pass "
-    "that will ever see these pages in full — a section you don't flag here is invisible "
+    "that will ever see these pages in full — a charge you don't flag here is invisible "
     "to every later step, even if it's the one place a real surcharge or exemption is "
-    "stated. When genuinely unsure whether something is relevant, flag it; a section "
-    "considered and dismissed later costs nothing, a section never surfaced at all is "
-    "gone for good.\n\n"
-    "Concretely, list every section present in the attached pages: its number (if any), "
-    "its heading, and its type — 'charge' (it sets a fee for something), 'general_terms' "
-    "(definitions, or general conditions at the head of a chapter), or 'irrelevant' "
-    "(anything not about a vessel call charge — training courses, equipment servicing, "
-    "licences, and similar). For every section, list every canonical charge type it "
-    "affects — not just its own main charge: a section can discount, exempt or surcharge "
-    "a charge that isn't its main subject. Also list every explicit reference you see "
-    "verbatim (a clause number, a section number, an annex name) and any of the book's "
-    "own metadata (authority, jurisdiction, ports, schedule name, effective dates, "
-    "currency) this window happens to state.\n\n"
+    "stated. When genuinely unsure whether something is relevant, flag it; flagging "
+    "something dismissed later costs nothing, missing something entirely is gone for "
+    "good.\n\n"
+    "You have two things to report, and the second is the one that matters most:\n\n"
+    "1. Every section present in the attached pages: its number (if any), its heading, "
+    "and its type — 'charge' (it sets a fee for something), 'general_terms' (definitions, "
+    "or general conditions at the head of a chapter), or 'irrelevant' (anything not about "
+    "a vessel call charge — training courses, equipment servicing, licences, and similar). "
+    "For every section, list every canonical charge type it affects — not just its own "
+    "main charge: a section can discount, exempt or surcharge a charge that isn't its main "
+    "subject. Also list every explicit reference you see verbatim (a clause number, a "
+    "section number, an annex name) and any of the book's own metadata (authority, "
+    "jurisdiction, ports, schedule name, effective dates, currency) this window happens to "
+    "state. Do not report a page number for a section — you are not asked for one, and "
+    "guessing one is worse than not trying: found live, a model's own per-section page "
+    "citation is unreliable even for a page within the pages it was actually given.\n\n"
+    "2. For EACH of the six canonical charge types above, one paragraph: is it discussed "
+    "at all in these pages, and if so, what's here and what kind of information it is — a "
+    "base rate table, surcharges only, an exemption, a cross-reference to elsewhere in the "
+    "book, or nothing at all. This is what the extraction step actually reads before "
+    "looking at these pages itself, so make it a real paragraph, not a one-line label: "
+    "name the sections involved, describe roughly what the numbers/rules cover, and flag "
+    "anything that looks incomplete on its own (e.g. 'the base rate is here, but it "
+    "references a table that may be elsewhere'). If a charge genuinely isn't discussed "
+    "here, say so briefly rather than leaving this thin — every one of the six charges "
+    "needs an entry, present or not.\n\n"
     "Answer only from the attached pages. If they're blank or unreadable, return no "
-    "sections rather than guessing."
+    "sections and say so in each charge's notes rather than guessing."
 )
 
 
 def map_user_prompt(window_start: int, window_end: int, structure_notes: str = "") -> str:
-    pages = list(range(window_start, window_end + 1))
-    text = f"Pages {window_start}-{window_end} of a port tariff book are attached as a PDF.\n\n{_page_mapping_note(pages)}"
+    text = f"Pages {window_start}-{window_end} of a port tariff book are attached as a PDF."
     return text + _structure_notes_block(structure_notes)
 
 
@@ -200,7 +231,12 @@ EXTRACT_SYSTEM_PROMPT = (
 
 
 def extract_user_prompt(
-    charge: str, pages: list[int] | None = None, notes: str = "", pages_attached: bool = True, structure_notes: str = ""
+    charge: str,
+    pages: list[int] | None = None,
+    notes: str = "",
+    pages_attached: bool = True,
+    structure_notes: str = "",
+    map_notes: str = "",
 ) -> str:
     text = f"Canonical charge type to extract: {charge}\n\n"
     if pages_attached:
@@ -208,6 +244,7 @@ def extract_user_prompt(
     else:
         text += "No relevant sections were found in this document for this charge."
     text += _structure_notes_block(structure_notes)
+    text += _map_notes_block(map_notes)
     if notes:
         text += "\n\n---\n" + notes
     return text

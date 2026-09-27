@@ -1,10 +1,12 @@
 """Node 3 — Map (§6.1). LLM, parallel, one call per page window.
 
-Default window: 5 pages, overlapping by 1 — specs/EXTRACTION_SPEC.md §6.1
-(the reasoning for windowing over a single whole-document pass is there,
-not repeated here). Window size and overlap stay configurable so the
-future-work window-size evaluation (§8/§9) can run at other sizes
-without a code change (§11).
+Default window: 4 pages, overlapping by 1 — narrower than the original
+5 (specs/EXTRACTION_SPEC.md §6.1's reasoning for windowing at all is
+there, not repeated here), because Extract now receives whole relevant
+windows rather than individual cited pages (see below) — a smaller
+window keeps that bound reasonable. Window size and overlap stay
+configurable so the future-work window-size evaluation (§8/§9) can run
+at other sizes without a code change (§11).
 
 Each window is sent as a real PDF page range, not flattened text —
 found live: a book with a genuine two-column-per-page layout made
@@ -12,6 +14,15 @@ pdfplumber's plain text extraction lossy on at least one rate table (a
 value silently dropped, not just harder to read), confirmed against
 this project's own hand-verified gold config and confirmed fixed by
 sending the actual pages instead.
+
+WindowSection no longer carries a page citation — found live,
+repeatedly: a model's per-section page number is unreliable even
+*within* its own window's valid range (two different sections in the
+same window, off by different, non-uniform amounts, no out-of-range
+value for a clamp to catch). Assemble now trusts only the window's own
+verified bounds for a charge's page range, and Map's real per-charge
+output is `charge_notes` — a paragraph per canonical charge on whether
+and how it's discussed in this window — not a page number at all.
 """
 
 from __future__ import annotations
@@ -23,9 +34,9 @@ from typing import Any
 from .llm import structured_call
 from .pdf import extract_pdf_pages
 from .prompts import MAP_SYSTEM_PROMPT, map_user_prompt
-from .schemas import WindowMapResult, WindowSection
+from .schemas import WindowMapResult
 
-DEFAULT_WINDOW_SIZE = 5
+DEFAULT_WINDOW_SIZE = 4
 DEFAULT_WINDOW_OVERLAP = 1
 DEFAULT_CONCURRENCY_LIMIT = 3  # see extraction/extract.py's DEFAULT_CONCURRENCY_LIMIT — same
 # reasoning, only relevant when this module is called directly, not through the graph.
@@ -50,32 +61,6 @@ def window_ranges(n_pages: int, window_size: int = DEFAULT_WINDOW_SIZE, overlap:
             break
         start += stride
     return ranges
-
-
-def _corrected_sections(section: WindowSection, start: int, end: int) -> list[WindowSection]:
-    """A section's reported page is only trustworthy inside [start, end]
-    — the exact PDF pages actually attached for this call, known with
-    certainty regardless of anything the model reports. Found live: a
-    model can cite the book's own printed page number (visible on the
-    page image itself) instead of the attachment-position page it was
-    explicitly told to use, and does so inconsistently — a prompt
-    instruction alone isn't a reliable enough defense.
-
-    An out-of-range citation still means the section is real and was
-    seen somewhere in this window — dropping it or keeping the wrong
-    number both lose real content or point Extract at the wrong page.
-    Clamped to the *nearer* bound rather than spanning the whole window:
-    an earlier version spanned both start and end (belt-and-braces
-    guaranteed inclusion of the real page), but confirmed live that a
-    wider, noisier context measurably hurt a different charge's
-    per-port table transcription (towage's column-swap errors
-    reappeared with a wider context, absent with a tight one) — this
-    trades a small residual chance of excluding the real page for
-    meaningfully less noise in every other charge's context."""
-    if start <= section.page <= end:
-        return [section]
-    nearer = start if abs(section.page - start) <= abs(section.page - end) else end
-    return [section.model_copy(update={"page": nearer})]
 
 
 def _window_content(pdf_path: str, start: int, end: int, structure_notes: str = "") -> list:
@@ -109,7 +94,6 @@ def map_document(
         # confused model can't misreport which pages it actually saw.
         result.window_start_page = start
         result.window_end_page = end
-        result.sections = [s for section in result.sections for s in _corrected_sections(section, start, end)]
         return result
 
     if not ranges:

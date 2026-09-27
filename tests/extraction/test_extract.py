@@ -15,8 +15,8 @@ from extraction.schemas import (
 from .conftest import StubChatModel, make_blank_pdf
 
 
-def _context(charge, text="Some section text.", section_numbers=None):
-    return ChargeContext(charge=charge, section_numbers=section_numbers or ["1.1"], combined_text=text)
+def _context(charge, section_numbers=None):
+    return ChargeContext(charge=charge, section_numbers=section_numbers or ["1.1"])
 
 
 def test_extract_charge_folds_in_structure_notes_as_advisory_context():

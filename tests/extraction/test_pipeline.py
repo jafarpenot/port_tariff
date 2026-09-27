@@ -29,10 +29,10 @@ from extraction.schemas import (
     WindowSection,
 )
 
-from .conftest import StubChatModel, make_blank_pdf, text_of
+from .conftest import StubChatModel, make_blank_pdf, make_charge_notes, text_of
 
 PAGE_TEXTS = {1: "Acme Port Authority Tariff Book. Currency: ZAR.", 2: "2.1 VTS dues. Rate 0.5 per GT, minimum 100."}
-CONTEXT = ChargeContext(charge=CanonicalCharge.VTS, section_numbers=["2.1"], combined_text=PAGE_TEXTS[2])
+CONTEXT = ChargeContext(charge=CanonicalCharge.VTS, section_numbers=["2.1"])
 
 
 def _rule(rate=0.5) -> ProposedRule:
@@ -224,7 +224,8 @@ def test_run_pipeline_one_charge_exception_does_not_affect_the_others():
             return WindowMapResult(
                 window_start_page=1,
                 window_end_page=2,
-                sections=[WindowSection(section_number="2.1", heading="VTS dues", section_type=SectionType.CHARGE, page=2, affects_charges=[CanonicalCharge.VTS])],
+                sections=[WindowSection(section_number="2.1", heading="VTS dues", section_type=SectionType.CHARGE, affects_charges=[CanonicalCharge.VTS])],
+                charge_notes=make_charge_notes({CanonicalCharge.VTS: "VTS dues rate table."}),
             )
         if name == "ChargeExtraction":
             user_text = text_of(messages[-1].content)

@@ -38,32 +38,35 @@ def _section_key(section: WindowSection) -> str:
     return f"heading:{' '.join(section.heading.lower().split())}"
 
 
-def _slice_text(page_texts: dict[int, str], start: int, end: int) -> str:
-    return "\n\n".join(f"[page {p}]\n{page_texts.get(p, '')}" for p in range(start, end + 1))
-
-
-def merge_sections(map_results: list[WindowMapResult], page_texts: dict[int, str]) -> list[AssembledSection]:
+def merge_sections(map_results: list[WindowMapResult]) -> list[AssembledSection]:
     """Overlaps produce duplicate sightings of the same section across
     windows: deduplicate by (section_number, or normalised heading if
     none), and where sightings disagree on charge tags, take the union —
-    considering one section too many is cheap, missing a modifier is not."""
-    grouped: dict[str, list[WindowSection]] = defaultdict(list)
+    considering one section too many is cheap, missing a modifier is not.
+
+    A section's page range is the union of the *window bounds* it was
+    sighted in — never a per-section page citation (WindowSection no
+    longer has one; found live, repeatedly unreliable even within a
+    window's own valid range). The window call's own start/end is
+    ground truth (map_document() overwrites it from the real range
+    regardless of what the model echoes)."""
+    grouped: dict[str, list[tuple[WindowSection, WindowMapResult]]] = defaultdict(list)
     for window in map_results:
         for section in window.sections:
-            grouped[_section_key(section)].append(section)
+            grouped[_section_key(section)].append((section, window))
 
     merged: list[AssembledSection] = []
     for sightings in grouped.values():
         charges: set[CanonicalCharge] = set()
         references: set[str] = set()
-        pages: set[int] = set()
-        for s in sightings:
+        window_pages: set[int] = set()
+        for s, window in sightings:
             charges.update(s.affects_charges)
             references.update(s.references)
-            pages.add(s.page)
-        page_start, page_end = min(pages), max(pages)
+            window_pages.update(range(window.window_start_page, window.window_end_page + 1))
+        window_start_page, window_end_page = min(window_pages), max(window_pages)
 
-        types = {s.section_type for s in sightings}
+        types = {s.section_type for s, _ in sightings}
         if SectionType.CHARGE in types:
             section_type = SectionType.CHARGE
         elif SectionType.GENERAL_TERMS in types:
@@ -71,19 +74,19 @@ def merge_sections(map_results: list[WindowMapResult], page_texts: dict[int, str
         else:
             section_type = SectionType.IRRELEVANT
 
+        first_section = sightings[0][0]
         merged.append(
             AssembledSection(
-                section_number=sightings[0].section_number,
-                heading=sightings[0].heading,
+                section_number=first_section.section_number,
+                heading=first_section.heading,
                 section_type=section_type,
-                page_start=page_start,
-                page_end=page_end,
+                window_start_page=window_start_page,
+                window_end_page=window_end_page,
                 affects_charges=sorted(charges, key=lambda c: c.value),
                 references=sorted(references),
-                text=_slice_text(page_texts, page_start, page_end),
             )
         )
-    return sorted(merged, key=lambda s: s.page_start)
+    return sorted(merged, key=lambda s: s.window_start_page)
 
 
 def _normalize_ref(text: str) -> str:
@@ -106,10 +109,17 @@ def _chapter_of(section_number: str | None) -> str | None:
     return section_number.split(".")[0].strip()
 
 
-def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCharge, ChargeContext]:
+def build_charge_contexts(sections: list[AssembledSection], map_results: list[WindowMapResult]) -> dict[CanonicalCharge, ChargeContext]:
     """Each charge's context set (§6.1 node 4): its main section(s), every
     section tagged as affecting it, the general terms its chapter
-    inherits, and any explicitly referenced section."""
+    inherits, and any explicitly referenced section — plus, additively
+    (never a replacement for the section-tag mechanism above, same
+    "flag it, cheap to over-include" bias everywhere else in this
+    module), every window Map's own per-charge notes (`charge_notes`)
+    flagged as `present` for this charge. The two mechanisms can
+    disagree — a window with no section explicitly tagged for a charge
+    might still have a relevant charge_notes entry it caught only at
+    the coarser, whole-window judgment — union rather than pick one."""
     by_number = {s.section_number: s for s in sections if s.section_number}
     general_terms_sections = [s for s in sections if s.section_type is SectionType.GENERAL_TERMS]
 
@@ -117,7 +127,6 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
     for charge in CanonicalCharge:
         relevant = [s for s in sections if charge in s.affects_charges]
         section_numbers: list[str] = []
-        texts: list[str] = []
         pages: set[int] = set()
         seen_keys: set[str] = set()
 
@@ -128,8 +137,7 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
             seen_keys.add(key)
             if section.section_number:
                 section_numbers.append(section.section_number)
-            texts.append(section.text)
-            pages.update(range(section.page_start, section.page_end + 1))
+            pages.update(range(section.window_start_page, section.window_end_page + 1))
 
         for s in relevant:
             _add(s)
@@ -143,11 +151,19 @@ def build_charge_contexts(sections: list[AssembledSection]) -> dict[CanonicalCha
                 if resolved is not None:
                     _add(resolved)
 
+        notes: list[str] = []
+        for window in map_results:
+            for note in window.charge_notes:
+                if note.charge is not charge or not note.present:
+                    continue
+                pages.update(range(window.window_start_page, window.window_end_page + 1))
+                notes.append(note.notes)
+
         contexts[charge] = ChargeContext(
             charge=charge,
             section_numbers=section_numbers,
             pages=sorted(pages),
-            combined_text="\n\n".join(texts),
+            notes="\n\n".join(notes),
         )
     return contexts
 
@@ -179,10 +195,9 @@ def finalize_identity(provisional: ProvisionalIdentity, map_results: list[Window
 def assemble(
     map_results: list[WindowMapResult],
     provisional_identity: ProvisionalIdentity,
-    page_texts: dict[int, str],
 ) -> AssembleResult:
-    sections = merge_sections(map_results, page_texts)
-    charge_contexts = build_charge_contexts(sections)
+    sections = merge_sections(map_results)
+    charge_contexts = build_charge_contexts(sections, map_results)
     identity = finalize_identity(provisional_identity, map_results)
     out_of_scope = [s for s in sections if s.section_type is SectionType.CHARGE and not s.affects_charges]
     general_terms_found = any(s.section_type is SectionType.GENERAL_TERMS for s in sections)

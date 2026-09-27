@@ -250,7 +250,7 @@ def run_pipeline(
     total_sections = sum(len(w.sections) for w in map_results)
     log(f"map: {len(map_results)} windows, {total_sections} sections found")
 
-    assemble_result = assemble(map_results, identity, page_texts)
+    assemble_result = assemble(map_results, identity)
     log(f"assemble: {len(assemble_result.out_of_scope_sections)} out-of-scope sections, general_terms_found={assemble_result.general_terms_found}")
 
     extractions: dict[CanonicalCharge, ChargeExtraction] = {}

@@ -15,6 +15,8 @@ from typing import Callable
 
 import pypdf
 
+from extraction.schemas import CanonicalCharge, ChargeWindowNote
+
 
 def make_blank_pdf(n_pages: int = 30) -> str:
     """A real, on-disk PDF with enough pages for any test's Map/Extract
@@ -33,6 +35,19 @@ def make_blank_pdf(n_pages: int = 30) -> str:
         with open(path, "wb") as f:
             writer.write(f)
     return str(path)
+
+
+def make_charge_notes(present: dict[CanonicalCharge, str] | None = None) -> list[ChargeWindowNote]:
+    """A full 6-entry charge_notes list for hand-built WindowMapResult
+    test fixtures — WindowMapResult's own validator requires exactly
+    one entry per CanonicalCharge. `present` maps charges that ARE
+    discussed to their note text; every other charge gets a default
+    'not discussed' entry, matching the model's own required behaviour."""
+    present = present or {}
+    return [
+        ChargeWindowNote(charge=c, present=(c in present), notes=present.get(c, "Not discussed in these pages."))
+        for c in CanonicalCharge
+    ]
 
 
 def text_of(content) -> str:
