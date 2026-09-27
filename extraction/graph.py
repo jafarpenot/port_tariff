@@ -40,6 +40,7 @@ from .schemas import (
     Disagreement,
     PipelineStatus,
     ReviewReport,
+    SemanticOutcome,
     ValidationResult,
     ValidationSeverity,
     VerifierResult,
@@ -48,7 +49,7 @@ from .schemas import (
     has_material_finding,
 )
 from .structure_scan import scan_structure
-from .validate import validate_all
+from .validate import outcome_regression_issue, validate_all
 from .verify import verify_all
 
 REPAIR_BUDGET = 3  # §6.7, configurable — Validate's structural repair loop
@@ -65,6 +66,7 @@ class PipelineState(TypedDict, total=False):
     map_results: list[WindowMapResult]
     assemble_result: AssembleResult
     extractions: dict[CanonicalCharge, ChargeExtraction]
+    ever_mapped: dict[CanonicalCharge, bool]
     validations: dict[CanonicalCharge, ValidationResult]
     validation_history: dict[CanonicalCharge, list[ValidationResult]]
     pipeline_statuses: dict[CanonicalCharge, PipelineStatus]
@@ -223,7 +225,8 @@ def node_extract(state: PipelineState, config) -> dict:
             concurrency_limit=concurrency_limit,
             structure_notes=state.get("structure_notes", ""),
         )
-        return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}}
+        ever_mapped = {c: e.outcome is SemanticOutcome.MAPPED for c, e in new_extractions.items()}
+        return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}, "ever_mapped": ever_mapped}
 
     # Both repair kinds are handled in this same call — not an either/or
     # priority. Treating them as mutually exclusive caused a real
@@ -280,11 +283,35 @@ def node_extract(state: PipelineState, config) -> dict:
     pending_repair = dict(state.get("verify_pending_repair", {}))
     for charge in challenges:
         pending_repair[charge] = False
-    return {"extractions": merged, "repair_counts": repair_counts, "verify_pending_repair": pending_repair}
+    # Sticky, never reset to False -- same "once mapped, stay mapped"
+    # rule as pipeline.py's process_charge(), just persisted in graph
+    # state across node invocations instead of a plain loop variable.
+    ever_mapped = dict(state.get("ever_mapped", {}))
+    for charge, extraction in repaired.items():
+        if extraction.outcome is SemanticOutcome.MAPPED:
+            ever_mapped[charge] = True
+    return {
+        "extractions": merged,
+        "repair_counts": repair_counts,
+        "verify_pending_repair": pending_repair,
+        "ever_mapped": ever_mapped,
+    }
 
 
 def node_validate(state: PipelineState, config) -> dict:
     validations = validate_all(state["extractions"], state["page_texts"])
+    ever_mapped = state.get("ever_mapped", {})
+    for charge, extraction in state["extractions"].items():
+        if ever_mapped.get(charge) and extraction.outcome is not SemanticOutcome.MAPPED:
+            # Same sticky guard as pipeline.py's process_charge() -- a repair
+            # round left outcome as something other than mapped after this
+            # charge was already committed as mapped earlier this run. Fed
+            # back as a HARD issue so it flows through the same
+            # repair-budget/exhaustion machinery as any other structural
+            # failure, not silently accepted.
+            _log(state, config, f"{charge.value}: repair round left outcome as {extraction.outcome.value!r} instead of mapped -- rejected")
+            validations[charge].issues.append(outcome_regression_issue(extraction.outcome))
+            validations[charge].valid = False
     invalid = [c.value for c, v in validations.items() if not v.valid]
     _log(state, config, f"validate: invalid={invalid}")
     # Full per-attempt history, not just the latest result — `validations`

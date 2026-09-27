@@ -291,6 +291,50 @@ def test_rejection_at_human_approval_is_recorded():
     assert resumed["report"] is not None  # kept, per §6.1 node 9: "reject -> stop, keep the report"
 
 
+def test_verify_repair_that_reclassifies_away_from_mapped_is_rejected_and_retried_through_the_graph():
+    """graph.py's port of pipeline.py's sticky ever_mapped guard: a
+    verify-repair that abandons a correctly mapped proposal must be
+    rejected as a HARD validation failure (not silently accepted),
+    forcing another repair attempt that restores mapped."""
+    vts_extract_attempts = {"n": 0}
+    vts_verify_attempts = {"n": 0}
+
+    def respond(schema, messages):
+        schema_name = schema.__name__
+        user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
+        if schema_name == "ProvisionalIdentity":
+            return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
+        if schema_name == "WindowMapResult":
+            return _map_respond(user_text)
+        if schema_name == "ChargeExtraction":
+            if "Canonical charge type to extract: vts" in user_text:
+                vts_extract_attempts["n"] += 1
+                if vts_extract_attempts["n"] == 2:
+                    return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.NOT_PRESENT)  # wrongly abandons mapped
+                return _good_vts_rule()
+            return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+        if schema_name == "VerifierResult":
+            if "Canonical charge type under review: vts" in user_text:
+                vts_verify_attempts["n"] += 1
+                if vts_verify_attempts["n"] == 1:
+                    return VerifierResult(charge=CanonicalCharge.VTS, findings=[VerifierFinding(severity=VerifierSeverity.MATERIAL, problem="missing surcharge", pages=[2])])
+                return VerifierResult(charge=CanonicalCharge.VTS, findings=[])
+            return VerifierResult(charge=CanonicalCharge.LIGHT_DUES, findings=[])
+        raise AssertionError(f"unexpected schema {schema_name}")
+
+    llm = StubChatModel(respond)
+    _, result, _ = _run(llm, "thread-graph-outcome-guard", verify_budget=1)
+
+    report = result["report"]
+    vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
+    assert vts_extract_attempts["n"] == 3  # good, wrongly-abandoned, repaired back to good
+    assert vts_entry.status is None
+    assert vts_entry.outcome is SemanticOutcome.MAPPED
+    assert report.disagreements == []
+
+
 def test_a_stuck_validate_repair_on_one_charge_does_not_spuriously_re_extract_a_different_charges_verify_repair():
     """Regression test for a real bug: node_extract used to treat
     verify-repairs and validate-repairs as mutually exclusive per call.

@@ -28,6 +28,33 @@ def _warn(message: str) -> ValidationIssue:
     return ValidationIssue(severity=ValidationSeverity.WARNING, message=message)
 
 
+def outcome_regression_issue(new_outcome: SemanticOutcome) -> ValidationIssue:
+    """Confirmed live (KNOWN_ISSUES.md): a validate- or verify-repair call
+    can reclassify a charge's outcome away from `mapped` instead of
+    fixing its structure/content, since nothing previously constrained
+    it to keep the outcome it already committed to — cost two correctly
+    mapped charges their proposals in one run, over narrow concerns
+    (missing surcharges) neither warranted abandoning `mapped` for. Fed
+    back as a HARD validation issue so it flows through the same
+    repair-budget/exhaustion machinery as any other structural
+    failure — if the model can't restore `mapped` within budget, an
+    honest EXTRACTION_FAILED beats silently accepting the downgrade.
+
+    Shared by pipeline.py and graph.py — the two entry points apply the
+    same sticky "once mapped, stay mapped" rule, just wired through
+    different control flow (a plain loop vs. graph state checkpointed
+    across node invocations)."""
+    return ValidationIssue(
+        severity=ValidationSeverity.HARD,
+        message=(
+            f"This charge was already committed as mapped, but this repair round's outcome is {new_outcome.value!r} "
+            "instead. A repair may only fix the structure/content of a proposal already mapped, never change "
+            "outcome away from it. Restore outcome to 'mapped' and address the original concern within the "
+            "proposal itself."
+        ),
+    )
+
+
 def _validate_enums(rule: ProposedRule) -> list[ValidationIssue]:
     """`basis`/`rounding_mode`/`multiplicity`/`time_rounding` are real
     enums on ProposedRule (extraction/schemas.py) — an invalid value is

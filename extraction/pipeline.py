@@ -52,7 +52,7 @@ from .schemas import (
     VerifierSeverity,
     has_material_finding,
 )
-from .validate import validate_charge
+from .validate import outcome_regression_issue, validate_charge
 from .verify import verify_charge
 
 
@@ -70,28 +70,6 @@ class ChargeOutcome:
         self.repair_attempts: int = 0
         self.status: Optional[PipelineStatus] = None
         self.disagreement: Optional[Disagreement] = None
-
-
-def _outcome_regression_issue(new_outcome: SemanticOutcome) -> ValidationIssue:
-    """Confirmed live (KNOWN_ISSUES.md): a validate- or verify-repair call
-    can reclassify a charge's outcome away from `mapped` instead of
-    fixing its structure/content, since nothing previously constrained
-    it to keep the outcome it already committed to — cost two correctly
-    mapped charges their proposals in one run, over narrow concerns
-    (missing surcharges) neither warranted abandoning `mapped` for. Fed
-    back as a HARD validation issue so it flows through the same
-    repair-budget/exhaustion machinery as any other structural
-    failure — if the model can't restore `mapped` within budget, an
-    honest EXTRACTION_FAILED beats silently accepting the downgrade."""
-    return ValidationIssue(
-        severity=ValidationSeverity.HARD,
-        message=(
-            f"This charge was already committed as mapped, but this repair round's outcome is {new_outcome.value!r} "
-            "instead. A repair may only fix the structure/content of a proposal already mapped, never change "
-            "outcome away from it. Restore outcome to 'mapped' and address the original concern within the "
-            "proposal itself."
-        ),
-    )
 
 
 def _build_disagreement(charge: CanonicalCharge, extraction: ChargeExtraction, verify_result: VerifierResult) -> Disagreement:
@@ -127,9 +105,9 @@ def process_charge(
     budget is exhausted with a material finding still open (-> an
     unresolved Disagreement, never forced to agree). Once a charge has
     been mapped, a repair round is not allowed to reclassify it away
-    from mapped (see `_outcome_regression_issue`) — a real bug found
-    live, where a narrow verify concern led to abandoning a correct
-    proposal instead of fixing it.
+    from mapped (see `validate.outcome_regression_issue`) — a real bug
+    found live, where a narrow verify concern led to abandoning a
+    correct proposal instead of fixing it.
 
     A raw exception (a model response that fails structured-output
     parsing on every retry — found live, killed a 28-minute run outright
@@ -170,7 +148,7 @@ def process_charge(
                 # once this run, every later round must stay mapped or be treated
                 # as a HARD failure -- not just the round where it first flips.
                 log(f"{charge.value}: repair round left outcome as {extraction.outcome.value!r} instead of mapped -- rejected")
-                validation.issues.append(_outcome_regression_issue(extraction.outcome))
+                validation.issues.append(outcome_regression_issue(extraction.outcome))
                 validation.valid = False
             elif extraction.outcome is SemanticOutcome.MAPPED:
                 ever_mapped = True
