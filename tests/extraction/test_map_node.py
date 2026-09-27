@@ -51,21 +51,22 @@ def test_map_document_overwrites_the_models_own_page_echo():
     assert (results[0].window_start_page, results[0].window_end_page) == (1, 3)
 
 
-def test_map_document_corrects_an_out_of_range_page_citation_by_spanning_the_window():
+def test_map_document_clamps_an_out_of_range_page_citation_to_the_nearer_bound():
     """Found live: a model can cite the book's own printed page number
     (visible on the page image) instead of the attachment-position page
     it was told to use. A citation outside the window's own known range
-    is provably wrong -- split into two sightings at the window's start
-    and end so merge_sections' existing min/max union (extraction/
-    assemble.py) spans the whole window instead of pointing at a single
-    wrong page."""
+    is provably wrong -- clamped to whichever of the window's start/end
+    it's closer to (not spanning the whole window: confirmed live that a
+    wider context measurably hurt a different charge's per-port table
+    transcription)."""
 
     def respond(schema, messages):
         return WindowMapResult(
             window_start_page=999,
             window_end_page=999,
             sections=[
-                WindowSection(section_number="3.6", heading="Towage", section_type=SectionType.CHARGE, page=15),  # out of range
+                WindowSection(section_number="3.6", heading="Towage", section_type=SectionType.CHARGE, page=15),  # closer to end (9)
+                WindowSection(section_number="3.7", heading="Misc tug", section_type=SectionType.CHARGE, page=1),  # closer to start (5)
                 WindowSection(section_number="1.1", heading="Light dues", section_type=SectionType.CHARGE, page=6),  # in range
             ],
         )
@@ -74,10 +75,10 @@ def test_map_document_corrects_an_out_of_range_page_citation_by_spanning_the_win
     results = map_document({p: f"page {p}" for p in range(1, 10)}, llm, pdf_path=make_blank_pdf(), window_size=5, overlap=1)
     window = next(r for r in results if r.window_start_page == 5 and r.window_end_page == 9)
 
-    towage_pages = sorted(s.page for s in window.sections if s.section_number == "3.6")
-    assert towage_pages == [5, 9]  # split to span the whole window, not left at the wrong page 15
-    light_dues_pages = [s.page for s in window.sections if s.section_number == "1.1"]
-    assert light_dues_pages == [6]  # untouched -- already inside [5, 9]
+    by_section = {s.section_number: s.page for s in window.sections}
+    assert by_section["3.6"] == 9  # clamped to the nearer bound, not left at the wrong page 15
+    assert by_section["3.7"] == 5  # clamped to the nearer bound (start, not end)
+    assert by_section["1.1"] == 6  # untouched -- already inside [5, 9]
 
 
 def test_map_document_routes_each_window_to_its_own_canned_response():

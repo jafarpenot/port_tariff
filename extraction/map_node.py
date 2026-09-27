@@ -64,16 +64,18 @@ def _corrected_sections(section: WindowSection, start: int, end: int) -> list[Wi
     An out-of-range citation still means the section is real and was
     seen somewhere in this window — dropping it or keeping the wrong
     number both lose real content or point Extract at the wrong page.
-    Instead, split it into two sightings at the window's own start and
-    end: merge_sections (extraction/assemble.py) already unions a
-    section's page across every sighting via min/max, the same
-    mechanism that already reconciles overlapping windows' agreeing
-    sightings of the same section — so this makes an untrustworthy
-    citation span the whole window it was actually found in, rather
-    than pointing at a single, possibly wrong, page."""
+    Clamped to the *nearer* bound rather than spanning the whole window:
+    an earlier version spanned both start and end (belt-and-braces
+    guaranteed inclusion of the real page), but confirmed live that a
+    wider, noisier context measurably hurt a different charge's
+    per-port table transcription (towage's column-swap errors
+    reappeared with a wider context, absent with a tight one) — this
+    trades a small residual chance of excluding the real page for
+    meaningfully less noise in every other charge's context."""
     if start <= section.page <= end:
         return [section]
-    return [section.model_copy(update={"page": start}), section.model_copy(update={"page": end})]
+    nearer = start if abs(section.page - start) <= abs(section.page - end) else end
+    return [section.model_copy(update={"page": nearer})]
 
 
 def _window_content(pdf_path: str, start: int, end: int) -> list:
