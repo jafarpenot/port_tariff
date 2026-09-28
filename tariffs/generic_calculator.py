@@ -121,23 +121,47 @@ def compute_charge(
     return TariffResult(name=name, amount=amount, currency=currency, trace=trace, warnings=warnings, assumptions=assumptions)
 
 
+_NEGATION_WORDS = ("excluding", "except", "other than")
+
+
+def _normalize_port_key(key: str) -> str:
+    return " ".join(key.replace("/", " ").replace("_", " ").split()).lower()
+
+
 def _match_port_key(port_value: str, per_port_rules: dict[str, ProposedRule]) -> Optional[str]:
     """`VesselCall.port` values are the registry's own snake_case names
     ('richards_bay'); extracted `per_port_rules` keys are the book's own
     spelling ('Richards Bay'), and TNPA sometimes combines ports across
-    charges ('Port Elizabeth / Ngqura') or renames the leftover bucket
-    ('Other' vs. 'Other Ports'). Tries an exact match, then a
-    normalized/substring match (handles the combined-port case), then
-    falls back to a single catch-all key if the book has exactly one --
-    never silently guesses between two real, differently-named ports."""
+    charges ('Port Elizabeth / Ngqura'), renames the leftover bucket
+    ('Other' vs. 'Other Ports'), or names it as a negation of the ports
+    that *do* have their own entry ('all ports excluding Durban and
+    Saldanha Bay' -- found live: this contains the substring "durban",
+    which a naive substring check matched instead of the real, exact
+    'Durban' key sitting right next to it in the same dict).
+
+    Every key is checked for an *exact* match first, across the whole
+    dict, before a substring match is tried on any key -- an exact
+    match must always win over an accidental substring hit. A negation
+    key is never substring-matched at all (it names ports it explicitly
+    is NOT for); it's only ever reached via the single-catch-all
+    fallback, same as 'Other'."""
     if port_value in per_port_rules:
         return port_value
+
     normalized_target = " ".join(port_value.replace("_", " ").split()).lower()
-    for key in per_port_rules:
-        normalized_key = " ".join(key.replace("/", " ").replace("_", " ").split()).lower()
-        if normalized_target == normalized_key or normalized_target in normalized_key:
+    normalized = {key: _normalize_port_key(key) for key in per_port_rules}
+
+    for key, normalized_key in normalized.items():
+        if normalized_target == normalized_key:
             return key
-    catch_all = [key for key in per_port_rules if "other" in key.lower()]
+
+    for key, normalized_key in normalized.items():
+        if any(word in normalized_key for word in _NEGATION_WORDS):
+            continue
+        if normalized_target in normalized_key:
+            return key
+
+    catch_all = [key for key, normalized_key in normalized.items() if "other" in normalized_key or any(word in normalized_key for word in _NEGATION_WORDS)]
     if len(catch_all) == 1:
         return catch_all[0]
     return None

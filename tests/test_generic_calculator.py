@@ -137,6 +137,27 @@ def test_compile_charge_varies_by_port_unknown_port_reports_clearly():
     assert "no extracted rule matches port" in result.warnings[0]
 
 
+def test_compile_charge_varies_by_port_exact_match_wins_over_a_negation_key():
+    """Found live: VTS's real per_port_rules has a key literally named
+    'all ports excluding Durban and Saldanha Bay' sitting next to an
+    exact 'Durban' key -- a naive substring check matched "durban"
+    against the negation key first (since it contains that word),
+    computing the wrong port's rate entirely."""
+    other_rule = _rule(PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.54)), rounding_mode="exact")
+    durban_rule = _rule(PricingShapes(per_unit=PerUnitShape(selected=True, rate=0.65)), rounding_mode="exact")
+    entry = _entry(
+        CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED, varies_by_port=True,
+        per_port_rules={
+            "all ports excluding Durban and Saldanha Bay": other_rule,
+            "Durban": durban_rule,
+            "Saldanha Bay": durban_rule,
+        },
+    )
+    fn = compile_charge(CanonicalCharge.VTS, entry)
+    result = fn(VesselCall(port=Port.DURBAN, gross_tonnage=51_255))
+    assert result.amount == pytest.approx(51_255 * 0.65)
+
+
 def test_compile_charge_not_mapped_reports_clearly_instead_of_crashing():
     entry = _entry(CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.UNMAPPED, unmapped_source_text="some free-form table")
     fn = compile_charge(CanonicalCharge.LIGHT_DUES, entry)

@@ -401,3 +401,25 @@ the general path in place of the existing one — try `extract_charge()`
 first, and only retry with `extract_charge_general()` when it returns
 `unmapped` specifically because the base calculation doesn't fit any of
 the four shapes.
+
+## ~~Generic compiler's port matching mismatched a negation key~~ — fixed
+
+Found live, in the compiler's own first real end-to-end test (Phase 5/6 of
+the generic-calculator build): 5 of 6 TNPA charges compiled from a fresh
+extraction matched the known reference case (`tests/test_reference_case.py`)
+exactly, to the cent — VTS was off by 17% (27,677.70 vs. 33,315.75).
+
+Root cause was `tariffs/generic_calculator.py`'s own `_match_port_key()`,
+not the extraction: VTS's real `per_port_rules` has a key literally named
+`'all ports excluding Durban and Saldanha Bay'` sitting next to an exact
+`'Durban'` key. The matcher checked each key for "exact match OR substring
+match" in dict iteration order, so the negation key's substring hit
+("durban" is literally inside it) won before the real, exact `'Durban'`
+key later in the same dict was ever reached.
+
+**Fixed**: every key is now checked for an *exact* match first, across
+the whole dict, before any substring match is attempted on any key: and
+a key containing a negation word ("excluding"/"except"/"other than") is
+never substring-matched at all — it's only reachable via the
+single-catch-all fallback, same as "Other". Covered by a regression test
+reconstructing the exact real data (`test_compile_charge_varies_by_port_exact_match_wins_over_a_negation_key`).
