@@ -9,3 +9,7 @@ build/
 dist/
 .DS_Store
 .env
+
+# Source tariff documents kept locally for live extraction/testing but not published.
+Port Tariff.pdf
+Test Task.docx
