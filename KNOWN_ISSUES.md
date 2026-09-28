@@ -2,7 +2,7 @@
 
 Found live, not yet fixed. Each entry states what's wrong, where, and why it matters.
 
-## graph.py has no per-charge exception isolation — reconfirmed live on the Pattern B port's own verification run
+## ~~graph.py has no per-charge exception isolation~~ — fixed
 
 Not a new bug, and not caused by today's graph.py work — this is the exact
 pre-existing gap `pipeline.py` was originally built to fix (see that
@@ -26,15 +26,58 @@ try/except correctly isolates this same failure mode to a single
 `SYSTEM_ERROR`, confirmed live the same session; `graph.py` has no
 equivalent.
 
-**To fix, if graph.py is ever brought back into active use**: wrap each
-charge's `extract_charge()` call inside `extract_all()`'s `_call()`
-closure (or `node_extract()` itself) in a try/except, recording a
-per-charge `SYSTEM_ERROR`-equivalent status in `PipelineState` instead of
-letting the exception propagate — the same fix `pipeline.py` already has,
-ported the same way Pattern B's guard was. Not attempted here: per this
-session's established scope, only `pipeline.py` is actively maintained;
-`graph.py` gets shared-function fixes for free but not its own
-architectural changes unless specifically requested.
+**Fixed**: `extract_all()` now wraps each charge's `extract_charge()` call
+in its own try/except and returns `(extractions, errors)` instead of a
+plain dict; `node_extract()` records `PipelineStatus.SYSTEM_ERROR` per
+failed charge (and drops any stale pre-repair extraction for a charge
+whose *repair* attempt raises, so it doesn't look like a live answer next
+to a SYSTEM_ERROR status) instead of letting the exception propagate —
+the same isolation `pipeline.py`'s `process_charge()` already had.
+`build_report()` needed no changes — it already handled a missing
+extraction gracefully. Covered by a mocked end-to-end graph test that
+reproduces this exact scenario (one charge's extraction raising
+mid-batch) and confirms the run completes with that charge alone marked
+`SYSTEM_ERROR` while the others finish normally.
+
+Also worth noting: the underlying trigger (a modifier failing "exactly
+one of adjustment_percentage/adjustment_flat_amount/raw_description")
+is separately addressed below — see `structured_call`'s retry-feedback
+fix — so this isolation is now a safety net for whatever residual
+failure remains, not the primary defense.
+
+## ~~`structured_call` blindly retried a validation failure instead of feeding it back~~ — fixed
+
+Root cause of the modifier "exactly one of adjustment_percentage/
+adjustment_flat_amount/raw_description" failures seen throughout this
+document (light_dues/towage SYSTEM_ERRORs on `pipeline.py`, the
+graph.py crash above, and the general-shapes regression below) — not
+three separate bugs, one mechanism showing up in three schemas. On a
+`ValidationError`, `structured_call()` retried with the *exact same
+messages*, hoping for a different answer by chance, never telling the
+model what it got wrong. Confirmed live this session: a fast, targeted
+A/B check (bypassing Map/Assemble, calling `extract_charge()` directly
+against real Map-assembled context for light_dues/towage/pilotage, 2
+reps each) found the model correctly reads and structures the exact
+content that crashed before (Durban's 50% cancellation surcharge) most
+of the time — the failure is intermittent, not a comprehension gap, and
+not caused by `map_notes` (tested with notes stripped too; no
+correlation with the crash either way — see the map_notes A/B findings
+in this session's transcript if that needs revisiting).
+
+**Fixed**: each retry after a `ValidationError` now appends the exact
+error to the conversation before re-asking, so it's a real correction
+attempt instead of a re-roll. Paired with spelling out the "exactly one
+of" rule explicitly in both `EXTRACT_SYSTEM_PROMPT` and
+`GENERAL_EXTRACT_SYSTEM_PROMPT` (neither said so before — the model was
+left to infer it from the schema alone). **Live re-verified** on the
+one case with a documented, repeatable (2/2) failure rate before today:
+`extract_charge_general()` on TNPA's towage table (page 8) now succeeds
+cleanly on both reps (`mapped`, 64/39 bands, 5 modifiers each, zero
+validation errors) where it failed validation twice independently
+before; RAK's tug-table win case re-checked too, still clean (no
+regression). Covered by two new stub-based unit tests
+(`test_llm.py`) confirming the retry both includes the error text and
+still propagates once genuinely exhausted.
 
 ## ~~Table-of-contents mentions merged with the real section, exploding a charge's context~~ — fixed
 
@@ -254,7 +297,7 @@ cutoff), Durban 23.65, Saldanha 47.32, Port Elizabeth/Ngqura still 21.50.
 Not fixed by anything targeted at this issue directly — a side effect of the
 two other fixes.
 
-## Experimental general pricing vocabulary (extraction/general_shapes.py) — evaluated, not yet adoptable
+## Experimental general pricing vocabulary (extraction/general_shapes.py) — regression resolved, still not wired in
 
 Built to close a real, confirmed gap: RAK Ports' towage tariff is keyed by tug
 selection (Ghalilah/Hobby/.../Osprey), not any numeric basis range, so none
@@ -280,20 +323,26 @@ recursive pricing DSL.
   surcharge descriptions (after-hours, additional-tug, no-power, cancellation,
   delay fee) both times — not random noise, a repeatable weak spot.
 
-**Conclusion: the vocabulary is sound, the current prompt isn't hardened
-enough to replace or run alongside the existing path yet.** The existing
-`EXTRACT_SYSTEM_PROMPT` reached its current reliability only after many
-rounds of live-found fixes this session (the rounding-unit concept, the
-modifiers escape hatch, the partial-unit billing instruction); the general
-path's prompt (`GENERAL_EXTRACT_SYSTEM_PROMPT`) hasn't had that same
-iteration yet — the expected state of a first version, not a dead end.
+**Root cause found and fixed, separately** (see `structured_call`'s
+retry-feedback entry above): both failures were `structured_call()`
+blindly re-rolling a validation failure instead of feeding it back, plus
+`GENERAL_EXTRACT_SYSTEM_PROMPT` never spelling out the "exactly one of"
+rule or which field goes with `flat` vs. `linear`. Not a deeper
+vocabulary problem — the RAK win case never even hit a validation error,
+so the mechanism was never exercised there.
 
-**Recommended path, not built**: don't run the general path in place of the
-existing one. Try the existing `extract_charge()` first; only if *it*
-returns `unmapped` specifically because the base calculation doesn't fit
-any of the four shapes, retry with `extract_charge_general()`. That gets
-the proven path's reliability on the cases it already handles, and the new
-capability only for the categorical-table cases it structurally cannot
-represent — without exposing the not-yet-hardened general prompt to cases
-where the existing one already works well. Not wired into
-pipeline.py/graph.py in this pass.
+**Re-verified live after the fix**: TNPA's towage table (the exact
+regression case, same page 8) now returns `mapped` cleanly on both reps
+(64 and 39 bands, 5 modifiers each, zero validation errors) instead of
+failing twice. RAK's tug table re-checked too — still a clean win, no
+regression from the prompt changes.
+
+**Still not wired into pipeline.py/graph.py.** The regression that was
+blocking adoption is resolved, but that's one fix verified on one
+document pair, not the same depth of live iteration the existing
+`EXTRACT_SYSTEM_PROMPT` has had across this whole session. The
+recommended integration path is unchanged and still not built: don't run
+the general path in place of the existing one — try `extract_charge()`
+first, and only retry with `extract_charge_general()` when it returns
+`unmapped` specifically because the base calculation doesn't fit any of
+the four shapes.
