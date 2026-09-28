@@ -345,6 +345,20 @@ def _compute_tariff_outcomes(
             # caught here and propagates as the broken-program case it is.
             outcomes[name] = TariffOutcome(computed=False, reason=f"not computable — {exc}")
             continue
+        if result.amount is None:
+            # A compiled charge (tariffs.generic_calculator) signals "can't
+            # compute this" by returning a result with no amount and a
+            # warning explaining why, instead of raising -- found live: a
+            # charge that mapped via the classical calculators.py always
+            # produces a real number or raises RateNotPublished, so this
+            # branch was never needed until compiled charges existed.
+            # Without it, `computed=True` was set unconditionally whenever
+            # nothing raised, regardless of whether anything was actually
+            # computed -- crashed app.py's `f"{amount:,.2f}"` formatting on
+            # a charge the extraction itself reported as unmapped.
+            reason = "; ".join(result.warnings) if result.warnings else "not computable"
+            outcomes[name] = TariffOutcome(computed=False, reason=reason)
+            continue
         outcomes[name] = TariffOutcome(computed=True, result=result)
     return outcomes
 

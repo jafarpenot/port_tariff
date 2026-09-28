@@ -184,6 +184,46 @@ def test_to_tariff_plan_matches_nlp_s_expected_shape():
     assert mod_fn(calc_fn(_CALL, None), _CALL, None).amount == pytest.approx(51_255.0)
 
 
+def test_parse_vessel_request_treats_an_unmapped_compiled_charge_as_not_computed():
+    """Found live: a charge whose extraction outcome isn't 'mapped'
+    compiles to a closure returning amount=None with an explanatory
+    warning instead of raising -- _compute_tariff_outcomes() only ever
+    checked for a raised RateNotPublished, so this was unconditionally
+    treated as computed=True, and app.py crashed formatting None as a
+    number. Must come back computed=False with the compiled warning as
+    the reason, same shape as any other not-computable charge."""
+    from tariffs.nlp import Parsed, VesselCallExtraction, parse_vessel_request
+
+    class _StubStructuredLLM:
+        def __init__(self, canned):
+            self._canned = canned
+
+        def invoke(self, messages):
+            return self._canned
+
+    class _StubChatModel:
+        def __init__(self, canned):
+            self._canned = canned
+
+        def with_structured_output(self, schema):
+            return _StubStructuredLLM(self._canned)
+
+    canned = VesselCallExtraction(
+        port={"value": "durban", "evidence": "Durban"},
+        gross_tonnage={"value": 51_255.0, "evidence": "51255 GT"},
+    )
+    entries = {CanonicalCharge.LIGHT_DUES: _entry(CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.UNMAPPED, unmapped_source_text="a free-form table")}
+    plan = to_tariff_plan(compile_report(entries))
+
+    result = parse_vessel_request("GT 51,255 at Durban", llm=_StubChatModel(canned), tariff_plan=plan)
+
+    assert isinstance(result, Parsed)
+    outcome = result.tariffs["light_dues"]
+    assert outcome.computed is False
+    assert outcome.result is None
+    assert "not mapped" in outcome.reason
+
+
 def test_parse_vessel_request_uses_the_compiled_tariff_plan_not_calculators_py():
     from tariffs.nlp import Parsed, VesselCallExtraction, parse_vessel_request
 
