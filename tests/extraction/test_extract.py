@@ -156,8 +156,9 @@ def test_extract_all_only_repairs_charges_with_issues():
     llm = StubChatModel(respond)
     contexts = {CanonicalCharge.LIGHT_DUES: _context(CanonicalCharge.LIGHT_DUES)}  # only the failing charge
     issues = {CanonicalCharge.LIGHT_DUES: [ValidationIssue(severity=ValidationSeverity.HARD, message="bad thing")]}
-    results = extract_all(contexts, {1: "text"}, llm, pdf_path="unused", repair_issues_by_charge=issues)
+    results, errors = extract_all(contexts, {1: "text"}, llm, pdf_path="unused", repair_issues_by_charge=issues)
 
+    assert errors == {}
     assert list(results.keys()) == [CanonicalCharge.LIGHT_DUES]
     assert "bad thing" in requested_charges[0]
 
@@ -201,8 +202,27 @@ def test_extract_all_runs_every_charge_and_the_request_charge_is_authoritative()
 
     llm = StubChatModel(respond)
     contexts = {c: _context(c) for c in CanonicalCharge}
-    results = extract_all(contexts, {1: "text"}, llm, pdf_path="unused")
+    results, errors = extract_all(contexts, {1: "text"}, llm, pdf_path="unused")
 
+    assert errors == {}
     assert set(results.keys()) == set(CanonicalCharge)
     for charge, extraction in results.items():
         assert extraction.charge == charge
+
+
+def test_extract_all_isolates_one_charge_s_exception_from_the_others():
+    def respond(schema, messages):
+        content = messages[-1].content
+        text = content if isinstance(content, str) else "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+        if "light_dues" in text:
+            raise RuntimeError("boom")
+        return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.NOT_PRESENT)
+
+    llm = StubChatModel(respond)
+    contexts = {c: _context(c) for c in CanonicalCharge}
+    results, errors = extract_all(contexts, {1: "text"}, llm, pdf_path="unused")
+
+    assert CanonicalCharge.LIGHT_DUES not in results
+    assert CanonicalCharge.LIGHT_DUES in errors
+    assert "boom" in errors[CanonicalCharge.LIGHT_DUES]
+    assert set(results.keys()) == set(CanonicalCharge) - {CanonicalCharge.LIGHT_DUES}

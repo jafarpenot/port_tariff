@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import base64
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
@@ -204,7 +204,8 @@ def extract_all(
     repair_issues_by_charge: dict[CanonicalCharge, list[ValidationIssue]] | None = None,
     verifier_findings_by_charge: dict[CanonicalCharge, list[VerifierFinding]] | None = None,
     structure_notes: str = "",
-) -> dict[CanonicalCharge, ChargeExtraction]:
+    log: Callable[[str], None] = lambda msg: None,
+) -> tuple[dict[CanonicalCharge, ChargeExtraction], dict[CanonicalCharge, str]]:
     """Charges in `repair_issues_by_charge` get that charge's specific
     validation errors folded into the prompt (§6.5's repair round);
     charges in `verifier_findings_by_charge` get an adversarial challenge
@@ -212,23 +213,44 @@ def extract_all(
     together, since Validate and Verify run at different graph stages).
     Every other charge in `charge_contexts` runs a first-pass extraction.
     Pass a `charge_contexts` containing only the charges to (re-)run to
-    repair without redoing already-settled charges."""
+    repair without redoing already-settled charges.
+
+    One charge's exception (a `structured_call` exhausting its retries,
+    most often) no longer kills every other charge in the same batch —
+    found live: pipeline.py's own per-charge try/except was built for
+    exactly this, but graph.py called this function directly with none,
+    so one bad modifier crashed the whole `graph.invoke()` run instead
+    of failing just that charge. Caught per charge here instead, so both
+    entry points share the same isolation. Returns `(extractions, errors)`
+    — `errors` holds only the charges that raised, keyed by charge, value
+    is `str(exc)`; a charge that failed has no entry in `extractions`."""
     charges = list(charge_contexts)
     repairs = repair_issues_by_charge or {}
     challenges = verifier_findings_by_charge or {}
 
-    def _call(charge: CanonicalCharge) -> ChargeExtraction:
-        return extract_charge(
-            charge,
-            charge_contexts[charge],
-            page_texts,
-            llm,
-            pdf_path=pdf_path,
-            repair_issues=repairs.get(charge),
-            verifier_findings=challenges.get(charge),
-            structure_notes=structure_notes,
-        )
+    def _call(charge: CanonicalCharge) -> tuple[CanonicalCharge, ChargeExtraction | None, str | None]:
+        log(f"{charge.value}: extract starting")
+        try:
+            extraction = extract_charge(
+                charge,
+                charge_contexts[charge],
+                page_texts,
+                llm,
+                pdf_path=pdf_path,
+                repair_issues=repairs.get(charge),
+                verifier_findings=challenges.get(charge),
+                structure_notes=structure_notes,
+            )
+            log(f"{charge.value}: extract done")
+            return charge, extraction, None
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            log(f"{charge.value}: extract FAILED — {error}")
+            return charge, None, error
 
     with ThreadPoolExecutor(max_workers=max(1, concurrency_limit)) as pool:
         results = list(pool.map(_call, charges))
-    return dict(zip(charges, results))
+
+    extractions = {charge: extraction for charge, extraction, _ in results if extraction is not None}
+    errors = {charge: error for charge, _, error in results if error is not None}
+    return extractions, errors

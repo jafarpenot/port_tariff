@@ -217,16 +217,25 @@ def node_extract(state: PipelineState, config) -> dict:
 
     if not existing:
         _log(state, config, "extract: first pass, all charges")
-        new_extractions = extract_all(
+        new_extractions, errors = extract_all(
             contexts,
             state["page_texts"],
             llm,
             pdf_path=state["pdf_path"],
             concurrency_limit=concurrency_limit,
             structure_notes=state.get("structure_notes", ""),
+            log=lambda msg: _log(state, config, msg),
         )
         ever_mapped = {c: e.outcome is SemanticOutcome.MAPPED for c, e in new_extractions.items()}
-        return {"extractions": new_extractions, "repair_counts": {c: 0 for c in contexts}, "ever_mapped": ever_mapped}
+        pipeline_statuses = dict(state.get("pipeline_statuses", {}))
+        for charge in errors:
+            pipeline_statuses[charge] = PipelineStatus.SYSTEM_ERROR
+        return {
+            "extractions": new_extractions,
+            "repair_counts": {c: 0 for c in contexts},
+            "ever_mapped": ever_mapped,
+            "pipeline_statuses": pipeline_statuses,
+        }
 
     # Both repair kinds are handled in this same call — not an either/or
     # priority. Treating them as mutually exclusive caused a real
@@ -265,7 +274,7 @@ def node_extract(state: PipelineState, config) -> dict:
         _log(state, config, "extract: nothing to repair, returning empty update")
         return {}
 
-    repaired = extract_all(
+    repaired, errors = extract_all(
         to_repair,
         state["page_texts"],
         llm,
@@ -274,9 +283,20 @@ def node_extract(state: PipelineState, config) -> dict:
         repair_issues_by_charge=issues_by_charge,
         verifier_findings_by_charge=challenges,
         structure_notes=state.get("structure_notes", ""),
+        log=lambda msg: _log(state, config, msg),
     )
     merged = dict(existing)
     merged.update(repaired)
+    # A charge whose *repair* attempt raised is worse than "still has the
+    # old problem" — we no longer know if the fix landed, so the stale
+    # pre-repair extraction must not be left looking like a live answer
+    # next to a SYSTEM_ERROR status (same "no extraction present" rule
+    # pipeline.py's process_charge() gives a SYSTEM_ERROR charge).
+    for charge in errors:
+        merged.pop(charge, None)
+    pipeline_statuses = dict(state.get("pipeline_statuses", {}))
+    for charge in errors:
+        pipeline_statuses[charge] = PipelineStatus.SYSTEM_ERROR
     # Clear the challenge flag the moment it's acted on — the charge now
     # waits for its next real verify pass instead of looking "still
     # pending" to every subsequent extract call until then.
@@ -295,6 +315,7 @@ def node_extract(state: PipelineState, config) -> dict:
         "repair_counts": repair_counts,
         "verify_pending_repair": pending_repair,
         "ever_mapped": ever_mapped,
+        "pipeline_statuses": pipeline_statuses,
     }
 
 

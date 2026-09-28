@@ -99,6 +99,48 @@ def test_pipeline_runs_to_the_human_approval_interrupt_and_produces_a_clean_repo
     assert resumed["approved"] is True
 
 
+def test_a_charge_that_raises_during_extract_becomes_system_error_and_does_not_crash_the_others():
+    """The bug this closes, confirmed live: extract_all()'s
+    ThreadPoolExecutor let one charge's exception (a structured-output
+    call exhausting its retries) propagate and kill graph.invoke() for
+    every charge in the same batch. Now it must be isolated the same
+    way pipeline.py's process_charge() already isolates it."""
+
+    def respond(schema, messages):
+        schema_name = schema.__name__
+        user_text = text_of(messages[-1].content)
+        if schema_name == "StructureScanResult":
+            return StructureScanResult(notes="No anomalies found.")
+        if schema_name == "ProvisionalIdentity":
+            return ProvisionalIdentity(authority="Acme Port Authority", currency="ZAR")
+        if schema_name == "WindowMapResult":
+            return _map_respond(user_text)
+        if schema_name == "ChargeExtraction":
+            if "Canonical charge type to extract: vts" in user_text:
+                return _good_vts_rule()
+            if "Canonical charge type to extract: light_dues" in user_text:
+                raise RuntimeError("simulated: exhausted structured-output retries")
+            return ChargeExtraction(charge=CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.NOT_PRESENT)
+        if schema_name == "VerifierResult":
+            return VerifierResult(charge=CanonicalCharge.VTS, findings=[])
+        raise AssertionError(f"unexpected schema {schema_name}")
+
+    llm = StubChatModel(respond)
+    graph, result, config = _run(llm, "thread-one-charge-errors")
+
+    assert "__interrupt__" in result
+    report = result["report"]
+
+    light_dues_entry = next(e for e in report.charges if e.charge is CanonicalCharge.LIGHT_DUES)
+    assert light_dues_entry.status is PipelineStatus.SYSTEM_ERROR
+    assert light_dues_entry.outcome is None
+    assert light_dues_entry.proposed_rule is None
+
+    vts_entry = next(e for e in report.charges if e.charge is CanonicalCharge.VTS)
+    assert vts_entry.outcome is SemanticOutcome.MAPPED
+    assert vts_entry.status is None
+
+
 def test_invalid_extraction_triggers_a_validate_repair_round_that_succeeds():
     vts_attempts = {"n": 0}
 
