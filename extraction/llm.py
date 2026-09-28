@@ -70,6 +70,16 @@ def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: 
     loop. A stub LLM's `respond` callable is invoked once per attempt if
     it keeps failing, same as a real flaky model would be re-asked.
 
+    Each retry after a `ValidationError` appends the exact validation
+    error to the conversation before re-asking — found live: without
+    this, a retry was a blind re-roll of the same messages, hoping for a
+    different answer by chance (confirmed: a modifier the model had
+    already read correctly still failed pydantic's "exactly one of
+    adjustment_percentage/adjustment_flat_amount/raw_description" check
+    on all 3 attempts, because it was never told which of the three
+    conditions it violated). Feeding the error back turns each retry
+    into an actual correction attempt instead.
+
     Also retries, with exponential backoff, on a transient error — a 429
     rate limit (several charges extracting in parallel burst past the
     account's tokens-per-minute limit) or a request timeout (one call
@@ -105,6 +115,17 @@ def structured_call(llm: Any, schema: Type[T], system_prompt: str, user_prompt: 
         except ValidationError as exc:
             last_error = exc
             attempts += 1
+            if attempts < MAX_STRUCTURED_CALL_ATTEMPTS:
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            "Your previous answer failed schema validation with this error:\n"
+                            f"{exc}\n\n"
+                            "Correct the problem and send a complete, valid answer — don't "
+                            "just describe the fix, produce the corrected structured output."
+                        )
+                    )
+                )
         except Exception as exc:
             if not _is_transient_error(exc) or transient_retries >= MAX_TRANSIENT_ERROR_RETRIES:
                 raise

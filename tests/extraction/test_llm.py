@@ -7,13 +7,51 @@ backoff.
 """
 
 from langchain_core.exceptions import ModelTimeoutError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError, model_validator
 
-from extraction.llm import MAX_TRANSIENT_ERROR_RETRIES, structured_call
+from extraction.llm import MAX_STRUCTURED_CALL_ATTEMPTS, MAX_TRANSIENT_ERROR_RETRIES, structured_call
 
 
 class _Answer(BaseModel):
     value: int
+
+
+class _Picky(BaseModel):
+    """A minimal schema with the same shape of rule that broke live —
+    exactly one of two fields, never both, never neither."""
+
+    a: int | None = None
+    b: int | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one(self) -> "_Picky":
+        if (self.a is None) == (self.b is None):
+            raise ValueError("exactly one of a, b must be set")
+        return self
+
+
+def _make_validation_error() -> ValidationError:
+    try:
+        _Picky(a=None, b=None)
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected a ValidationError")
+
+
+class _MessageCapturingStructuredLLM:
+    def __init__(self, respond):
+        self._respond = respond
+
+    def invoke(self, messages):
+        return self._respond(messages)
+
+
+class _MessageCapturingStubLLM:
+    def __init__(self, respond):
+        self._respond = respond
+
+    def with_structured_output(self, schema, **kwargs):
+        return _MessageCapturingStructuredLLM(self._respond)
 
 
 class _FakeRateLimitError(Exception):
@@ -118,3 +156,37 @@ def test_a_non_transient_error_propagates_immediately_no_retry():
         assert False, "expected RuntimeError to propagate"
     except RuntimeError:
         pass
+
+
+def test_a_validation_error_retry_feeds_the_error_back_not_a_blind_reroll():
+    calls = {"n": 0}
+    seen_messages = []
+
+    def respond(messages):
+        calls["n"] += 1
+        seen_messages.append(list(messages))
+        if calls["n"] == 1:
+            raise _make_validation_error()
+        return _Answer(value=99)
+
+    result = structured_call(_MessageCapturingStubLLM(respond), _Answer, "system", "user")
+    assert result.value == 99
+    assert calls["n"] == 2
+    # the retry's message list is the original two plus one new message about the failure
+    assert len(seen_messages[1]) == 3
+    assert "exactly one of a, b" in seen_messages[1][-1].content
+
+
+def test_validation_error_retries_are_exhausted_and_then_the_error_propagates():
+    calls = {"n": 0}
+
+    def respond(messages):
+        calls["n"] += 1
+        raise _make_validation_error()
+
+    try:
+        structured_call(_MessageCapturingStubLLM(respond), _Answer, "system", "user")
+        assert False, "expected ValidationError to propagate"
+    except ValidationError:
+        pass
+    assert calls["n"] == MAX_STRUCTURED_CALL_ATTEMPTS
