@@ -6,13 +6,17 @@ copy of what "valid" means — the whole point of Stage 1's closed rule
 vocabulary is that the calculator and this validator speak the same
 schema. Only MAPPED extractions are validated; bundled/not_present/
 unmapped charges carry no rule to check.
+
+The smoke calculation's pricing-type dispatch itself lives in
+`tariffs.generic_calculator.compute_base_amount` — shared with that
+module's *real* (non-synthetic) computation, so there is one dispatch
+to keep correct, not two independently drifting copies.
 """
 
 from __future__ import annotations
 
-from tariffs.rules import PricingType, RoundingMode, RoundingSpec
-from tariffs.schedule import Band
-from tariffs.shapes import banded_base_plus_increment, base_plus_increment, base_plus_increment_times_duration, per_unit_rate
+from tariffs.generic_calculator import compute_base_amount
+from tariffs.rules import PricingType, RoundingMode
 
 from .schemas import ChargeExtraction, ProposedRule, SemanticOutcome, ValidationIssue, ValidationResult, ValidationSeverity
 
@@ -107,37 +111,17 @@ def _validate_citations(extraction: ChargeExtraction, page_texts: dict[int, str]
 
 def _smoke_calculate(rule: ProposedRule) -> list[ValidationIssue]:
     """The engine computes this rule for a few synthetic vessels without
-    error, non-negative (§6.4) — using tariffs.shapes directly, the same
-    functions the real calculators call."""
+    error, non-negative (§6.4) — via `compute_base_amount`'s dispatch,
+    the same one the real (non-smoke) computation uses."""
     issues: list[ValidationIssue] = []
-    rounding = RoundingSpec(mode=RoundingMode(rule.rounding_mode), unit=rule.rounding_unit)
-    minimum = rule.minimum
+    known_pricing_types = {pt.value for pt in PricingType}
+    if rule.pricing_type not in known_pricing_types:
+        return issues  # unknown pricing_type already flagged elsewhere
 
     try:
         for units in _SMOKE_TEST_UNITS:
-            if rule.pricing_type == PricingType.PER_UNIT.value:
-                amount = per_unit_rate(units, rule.pricing_params["rate"], rounding, minimum)
-            elif rule.pricing_type == PricingType.BASE_PLUS_INCREMENT.value:
-                amount = base_plus_increment(units, rule.pricing_params["base"], rule.pricing_params["rate"], rounding)
-            elif rule.pricing_type == PricingType.BANDED.value:
-                bands = [
-                    Band(
-                        min_gt_exclusive=b["min_exclusive"],
-                        max_gt_inclusive=b["max_inclusive"],
-                        base=b["base"],
-                        increment_above_gt=b["increment_above"],
-                        per_100t=b["per_unit_rate"],
-                    )
-                    for b in rule.pricing_params["bands"]
-                ]
-                amount = banded_base_plus_increment(units, bands)
-            elif rule.pricing_type == PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value:
-                result = base_plus_increment_times_duration(
-                    units, rule.pricing_params["basic_rate"], rule.pricing_params["daily_rate"], 1.0, rounding
-                )
-                amount = result.total
-            else:
-                return issues  # unknown pricing_type already flagged elsewhere
+            days = 1.0 if rule.pricing_type == PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value else None
+            amount = compute_base_amount(rule, units, days=days)
             if rule.maximum is not None:
                 amount = min(amount, rule.maximum)
             if amount < 0:
