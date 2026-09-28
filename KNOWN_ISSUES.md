@@ -109,6 +109,61 @@ cheap to over-include" bias, not the unbounded explosion this entry
 describes. Worth revisiting only if it turns out to meaningfully hurt
 extraction quality in practice.
 
+## Five Verify disagreements found on TNPA's first crash-free full run — not schema failures, a different capability gap
+
+With the retry-feedback and per-charge isolation fixes in, a full
+`pipeline.py` run through TNPA came back with all 6 charges `mapped`,
+zero `SYSTEM_ERROR`, zero `EXTRACTION_FAILED` — the first time this
+session every charge cleared structurally. Verify still found 5 material,
+unresolved disagreements though — none of them a schema-validation
+failure; each is either an incomplete transcription or a misread value.
+Grouped by what's actually wrong, with a potential fix noted for each
+group (not built yet):
+
+**A. Block-rate billing unit lost (`light_dues`, `berthing_services`).**
+Both proposals charge "per gross ton" when the source states a rate per
+a *block* of the basis — "R117.08 per 100 tons or part thereof" — the
+same shape as the rounding-unit concept this session already added for
+partial-unit billing, just not recognised here. Likely cause: the model
+reads "per 100 tons" and infers a per-unit rate (dividing by 100) instead
+of `rate=117.08` with `rounding_mode=ceil_to_unit, rounding_unit=100`.
+**Potential fix**: extend `EXTRACT_SYSTEM_PROMPT`'s existing
+partial-unit-rounding paragraph with an explicit example of a rate
+quoted *per block* of the basis (not just "or part thereof" as a
+rounding trigger, but "per N units" as a `rounding_unit` value in its
+own right) — the two are currently one instruction, but the "per N
+units" framing isn't spelled out as its own trigger.
+
+**B. A document-wide VAT note not surfaced (`port_dues`, and likely others
+unverified).** The book states its rates are subject to 15% VAT once, in
+general terms — every charge's context includes those opening pages
+(all contexts here start with pages 1-7), so this isn't a locate
+problem, but nothing currently prompts the model to check for a
+blanket tax/VAT statement and carry it into the proposal (as a modifier
+or otherwise). **Potential fix**: add an explicit instruction to check
+the general-terms pages for a document-wide tax/VAT statement and
+represent it — as a `modifiers` entry, since the existing modifier
+mechanism already fits "an adjustment on top of the base rate."
+
+**C. `towage`: Richards Bay's "Above 100 000" band wrong (21.50 vs. the
+source's 23.65).** The proposal appears to have carried a neighbouring
+port's value into Richards Bay's cell — the same *shape* of error as the
+older, already-partially-investigated Pattern D table-misread issue
+below, but on a port that entry never actually checked (its own table
+only covered East London/Mossel Bay/Durban/Port Elizabeth/Saldanha).
+**Potential fix**: an explicit instruction not to assume adjacent ports
+share a table value unless the source marks them as such (a merged
+cell, "same as X") — read each port's column independently.
+
+**D. `pilotage`: Saldanha's hourly tanker-stay duty captured as a
+modifier but the amount (R886.20) dropped.** The condition was
+recognised; the number wasn't carried into it — likely a `raw_description`
+that paraphrased the rule instead of quoting the figure verbatim.
+**Potential fix**: tighten the "verbatim quote" instruction to require
+the quote include the actual number, not just describe the condition —
+a `raw_description` without its figure is exactly as incomplete as
+leaving the field blank.
+
 ## `tariffs/nlp.py` bypasses `tariffs/engine.py` entirely
 
 `tariffs/nlp.py`'s module docstring (line 8) claims `Parsed.call` "goes into the
