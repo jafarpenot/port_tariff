@@ -1,12 +1,12 @@
 """Streamlit page: upload a port tariff PDF, run the extraction pipeline
 (specs/EXTRACTION_SPEC.md), and review the proposed rate schedule.
 
-Review only. Approving here records the decision on this run but does
-not yet feed a working calculation — tariffs/calculators.py's six
-functions are hand-written for TNPA's specific schedule shape (named
-surcharges, exemption lists, TNPA-only fields), not generic over the
-extraction pipeline's basis/pricing_type/pricing_params vocabulary. A
-generic, pricing-type-driven calculation engine is future work.
+Approving now saves the report to `extracted_reports/` (one JSON file
+per approval) — the main calculator page (app.py) can load it from
+there and compute against it via `tariffs.generic_calculator`'s
+data-driven engine, base rate only (v1 — see that module's docstring
+for why modifiers aren't applied yet). Rejecting still just records
+the decision; nothing is saved.
 
 Needs the `extraction` optional dependency group: pip install -e .[extraction]
 Needs OPENAI_API_KEY set in the environment — extraction/llm.py's
@@ -16,18 +16,40 @@ and still needs its own ANTHROPIC_API_KEY.
 """
 
 import os
+import re
 import tempfile
 import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
 import streamlit as st
+
+EXTRACTED_REPORTS_DIR = Path(__file__).resolve().parent.parent / "extracted_reports"
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "unknown"
+
+
+def _save_report(report) -> Path:
+    """One JSON file per approval -- never overwritten, so a review
+    history accumulates rather than one authority's saves clobbering
+    each other. app.py lists this directory to build its "Tariff book"
+    picker."""
+    EXTRACTED_REPORTS_DIR.mkdir(exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    authority = _slug(report.identity.authority or "unknown-authority")
+    path = EXTRACTED_REPORTS_DIR / f"{authority}_{stamp}.json"
+    path.write_text(report.model_dump_json(indent=2))
+    return path
 
 st.set_page_config(page_title="Extract a New Tariff", page_icon="\U0001F4C4")
 st.title("Extract a New Tariff (beta)")
 st.caption(
     "Upload any port authority's tariff PDF and an LLM pipeline proposes a structured rate "
     "schedule for human review — naming, currency, per-charge rules, and anything it disagrees "
-    "with itself about. Review only for now: approving here does not feed the calculator page "
-    "yet, see the module docstring for why."
+    "with itself about. Approving saves the report so the calculator page can compute against "
+    "it (base rate only — see the module docstring)."
 )
 
 try:
@@ -127,6 +149,7 @@ for key, default in [
     ("extract_config", None),
     ("extract_result", None),
     ("extract_decision", None),
+    ("extract_saved_path", None),
 ]:
     st.session_state.setdefault(key, default)
 
@@ -136,6 +159,7 @@ st.caption("A run makes many real LLM calls and can take several minutes, depend
 if st.button("Run extraction", type="primary", disabled=not uploaded):
     st.session_state["extract_result"] = None
     st.session_state["extract_decision"] = None
+    st.session_state["extract_saved_path"] = None
 
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(uploaded.getvalue())
@@ -166,7 +190,9 @@ if result is not None:
         c1, c2 = st.columns(2)
         if c1.button("Approve", type="primary"):
             _get_graph().invoke(Command(resume={"approved": True}), config=st.session_state["extract_config"])
+            saved_path = _save_report(result["report"])
             st.session_state["extract_decision"] = "approved"
+            st.session_state["extract_saved_path"] = str(saved_path)
             st.rerun()
         if c2.button("Reject"):
             _get_graph().invoke(Command(resume={"approved": False}), config=st.session_state["extract_config"])
@@ -174,3 +200,5 @@ if result is not None:
             st.rerun()
     elif st.session_state["extract_decision"] is not None:
         st.success(f"Recorded: {st.session_state['extract_decision']}. Upload another PDF above to run again.")
+        if st.session_state["extract_saved_path"]:
+            st.caption(f"Saved to `{st.session_state['extract_saved_path']}` — pick it on the calculator page's \"Tariff book\" selector.")

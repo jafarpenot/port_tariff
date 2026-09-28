@@ -18,7 +18,7 @@ from extraction.schemas import (
     ProposedRule,
     SemanticOutcome,
 )
-from tariffs.generic_calculator import compile_charge, compute_base_amount, compute_charge
+from tariffs.generic_calculator import compile_charge, compile_report, compute_base_amount, compute_charge, to_tariff_plan
 from tariffs.models import Port, VesselCall
 
 _CALL = VesselCall(port=Port.DURBAN, gross_tonnage=51_255)
@@ -164,3 +164,58 @@ def test_compile_charge_not_mapped_reports_clearly_instead_of_crashing():
     result = fn(_CALL)
     assert result.amount is None
     assert "not mapped" in result.warnings[0]
+
+
+# ---------------------------------------------------------------------------
+# to_tariff_plan() / parse_vessel_request(tariff_plan=...) integration
+# ---------------------------------------------------------------------------
+
+
+def test_to_tariff_plan_matches_nlp_s_expected_shape():
+    rule = _rule(PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)), rounding_mode="exact")
+    entries = {
+        CanonicalCharge.LIGHT_DUES: _entry(CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.MAPPED, proposed_rule=rule),
+        CanonicalCharge.VTS: _entry(CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED, proposed_rule=rule),
+    }
+    plan = to_tariff_plan(compile_report(entries))
+    assert set(plan) == {"light_dues", "vts_dues"}
+    calc_fn, mod_fn, dependency_met, missing_field = plan["light_dues"]
+    assert dependency_met(_CALL) is True  # light dues needs nothing beyond port+GT
+    assert mod_fn(calc_fn(_CALL, None), _CALL, None).amount == pytest.approx(51_255.0)
+
+
+def test_parse_vessel_request_uses_the_compiled_tariff_plan_not_calculators_py():
+    from tariffs.nlp import Parsed, VesselCallExtraction, parse_vessel_request
+
+    class _StubStructuredLLM:
+        def __init__(self, canned):
+            self._canned = canned
+
+        def invoke(self, messages):
+            return self._canned
+
+    class _StubChatModel:
+        def __init__(self, canned):
+            self._canned = canned
+
+        def with_structured_output(self, schema):
+            return _StubStructuredLLM(self._canned)
+
+    canned = VesselCallExtraction(
+        port={"value": "durban", "evidence": "Durban"},
+        gross_tonnage={"value": 51_255.0, "evidence": "51255 GT"},
+    )
+    # A deliberately distinctive rate -- TNPA's real light_dues rate is
+    # nowhere near this, so a match here can only come from the compiled
+    # plan, never from an accidental fall-through to calculators.py.
+    rule = _rule(PricingShapes(per_unit=PerUnitShape(selected=True, rate=999.0)), rounding_mode="exact")
+    entries = {CanonicalCharge.LIGHT_DUES: _entry(CanonicalCharge.LIGHT_DUES, outcome=SemanticOutcome.MAPPED, proposed_rule=rule)}
+    plan = to_tariff_plan(compile_report(entries))
+
+    result = parse_vessel_request("GT 51,255 at Durban", llm=_StubChatModel(canned), tariff_plan=plan)
+
+    assert isinstance(result, Parsed)
+    assert set(result.tariffs) == {"light_dues"}  # only the one charge in the compiled plan
+    outcome = result.tariffs["light_dues"]
+    assert outcome.computed is True
+    assert outcome.result.amount == pytest.approx(51_255.0 * 999.0)

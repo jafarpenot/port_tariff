@@ -323,9 +323,12 @@ _TARIFF_PLAN: dict[str, tuple[Callable, Callable, Callable[[VesselCall], bool], 
 }
 
 
-def _compute_tariff_outcomes(call: VesselCall, schedule: TariffSchedule) -> dict[str, TariffOutcome]:
+def _compute_tariff_outcomes(
+    call: VesselCall, schedule: Optional[TariffSchedule], *, tariff_plan: Optional[dict[str, tuple]] = None
+) -> dict[str, TariffOutcome]:
+    plan = tariff_plan if tariff_plan is not None else _TARIFF_PLAN
     outcomes: dict[str, TariffOutcome] = {}
-    for name, (calc_fn, mod_fn, dependency_met, missing_field) in _TARIFF_PLAN.items():
+    for name, (calc_fn, mod_fn, dependency_met, missing_field) in plan.items():
         if not dependency_met(call):
             outcomes[name] = TariffOutcome(
                 computed=False,
@@ -360,6 +363,7 @@ def parse_vessel_request(
     llm: Any = None,
     model: str = "claude-sonnet-5",
     schedule: Optional[TariffSchedule] = None,
+    tariff_plan: Optional[dict[str, tuple]] = None,
 ) -> ParseResult:
     """Parse a free-text vessel-call request into a `ParseResult`.
 
@@ -369,6 +373,14 @@ def parse_vessel_request(
     calls. `llm` can be any object exposing LangChain's
     `.with_structured_output(schema).invoke(messages)` surface — pass a
     stub here in tests instead of calling a real model.
+
+    `tariff_plan` overrides the hardcoded `_TARIFF_PLAN` (TNPA's own
+    calculators.py functions) with a different `name -> (calc_fn,
+    mod_fn, dependency_met, missing_field)` mapping — e.g.
+    `tariffs.generic_calculator.to_tariff_plan()`'s output, for
+    computing against a freshly extracted (not hand-written) schedule.
+    `schedule` is then ignored, since a compiled calc_fn already
+    carries its own rule and never reads it.
 
     Returns `Rejected` (not an exception) for a bad request: off-topic
     text, a port outside the book's eight, or a request missing the hard
@@ -426,7 +438,7 @@ def parse_vessel_request(
     # (module docstring, "A broken program is still an exception").
     vessel_call = VesselCall(**draft_values)
 
-    resolved_schedule = schedule if schedule is not None else _get_schedule()
-    tariffs = _compute_tariff_outcomes(vessel_call, resolved_schedule)
+    resolved_schedule = None if tariff_plan is not None else (schedule if schedule is not None else _get_schedule())
+    tariffs = _compute_tariff_outcomes(vessel_call, resolved_schedule, tariff_plan=tariff_plan)
 
     return Parsed(call=vessel_call, evidence=trace, tariffs=tariffs)

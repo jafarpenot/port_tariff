@@ -3,15 +3,36 @@ lives here. Every request goes through tariffs.nlp.parse_vessel_request()
 and renders whatever ParseResult comes back. tariffs.engine.calculate()
 is never called from this file.
 
+The "Tariff book" selector below is the only new logic: TNPA (existing)
+calls parse_vessel_request() exactly as before (tariff_plan=None, its
+own default); a saved, approved extraction report instead loads that
+report, compiles it via tariffs.generic_calculator (base rate only —
+see that module's docstring), and passes the result in as tariff_plan.
+
 Run: streamlit run app.py
 Needs ANTHROPIC_API_KEY set in the environment (see README).
 """
 
 import os
+from pathlib import Path
 
 import streamlit as st
 
 from tariffs.nlp import BERTHING_SERVICES_NOTE, Rejected, parse_vessel_request
+
+try:
+    from extraction.schemas import ReviewReport
+
+    from tariffs.generic_calculator import compile_report, to_tariff_plan
+
+    _EXTRACTION_AVAILABLE = True
+except ImportError:
+    # The `extraction` optional dependency group isn't installed — the
+    # base TNPA calculator below still works fully; only the "load a
+    # newly extracted tariff book" option is unavailable.
+    _EXTRACTION_AVAILABLE = False
+
+EXTRACTED_REPORTS_DIR = Path(__file__).resolve().parent / "extracted_reports"
 
 st.set_page_config(page_title="Port Tariff Calculator", page_icon="\U0001F6A2")
 st.title("Port Tariff Calculator")
@@ -24,6 +45,33 @@ if not os.environ.get("ANTHROPIC_API_KEY"):
     st.error("ANTHROPIC_API_KEY is not set in this environment. Set it and restart the app.")
     st.stop()
 
+
+def _saved_reports() -> dict[str, Path]:
+    """label -> path, newest first. Label falls back to the filename if
+    a saved report is somehow unreadable (never lets one bad file break
+    the picker for every other saved report)."""
+    if not EXTRACTED_REPORTS_DIR.exists():
+        return {}
+    labels: dict[str, Path] = {}
+    for path in sorted(EXTRACTED_REPORTS_DIR.glob("*.json"), reverse=True):
+        try:
+            authority = ReviewReport.model_validate_json(path.read_text()).identity.authority
+        except Exception:
+            authority = None
+        stamp = path.stem.rsplit("_", 1)[-1]
+        labels[f"{authority or path.stem} — {stamp}"] = path
+    return labels
+
+
+TNPA_EXISTING = "TNPA (existing)"
+saved = _saved_reports() if _EXTRACTION_AVAILABLE else {}
+tariff_book = st.selectbox("Tariff book", [TNPA_EXISTING, *saved.keys()])
+if tariff_book != TNPA_EXISTING:
+    st.caption(
+        "Computing against a freshly extracted (not hand-written) schedule — base rate only, "
+        "modifiers are reported as skipped, never applied."
+    )
+
 request_text = st.text_area(
     "Describe the vessel call",
     height=150,
@@ -34,9 +82,16 @@ request_text = st.text_area(
 )
 
 if st.button("Calculate", type="primary") and request_text.strip():
+    tariff_plan = None
+    if tariff_book != TNPA_EXISTING:
+        loaded_report = ReviewReport.model_validate_json(saved[tariff_book].read_text())
+        charges_by_key = {entry.charge: entry for entry in loaded_report.charges}
+        compiled = compile_report(charges_by_key, currency=loaded_report.identity.currency or "ZAR")
+        tariff_plan = to_tariff_plan(compiled)
+
     with st.spinner("Parsing request..."):
         try:
-            result = parse_vessel_request(request_text)
+            result = parse_vessel_request(request_text, tariff_plan=tariff_plan)
         except Exception as exc:  # broken program — not a bad request (see tariffs/nlp.py)
             st.exception(exc)
             st.stop()

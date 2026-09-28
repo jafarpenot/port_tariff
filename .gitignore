@@ -13,3 +13,7 @@ dist/
 # Source tariff documents kept locally for live extraction/testing but not published.
 Port Tariff.pdf
 Test Task.docx
+
+# Approved extraction reports saved by pages/1_Extract_New_Tariff.py -- runtime
+# artifacts, not source, and may contain a whole book's extracted rate schedule.
+extracted_reports/

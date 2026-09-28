@@ -19,6 +19,7 @@ from extraction.schemas import CanonicalCharge, ChargeReportEntry, ProposedRule,
 
 from .calculators import _apply_maximum, _basis_value, _services_for
 from .models import TariffResult, TraceStep, VesselCall
+from .nlp import _TARIFF_PLAN
 from .rules import Basis, PricingType, RoundingMode, RoundingSpec, TimeRounding, TimeSpec, round_time
 from .shapes import Band, banded_base_plus_increment, base_plus_increment, base_plus_increment_times_duration, per_unit_rate
 
@@ -212,3 +213,35 @@ def compile_report(charges: dict[CanonicalCharge, ChargeReportEntry], *, currenc
     omitted (so a caller iterating this dict never has to special-case
     a missing key)."""
     return {charge: compile_charge(charge, entry, currency=currency) for charge, entry in charges.items()}
+
+
+def _no_modifiers(result: TariffResult, call: VesselCall, schedule: Any) -> TariffResult:
+    """`tariffs/nlp.py`'s tariff-plan shape always applies a modifier
+    function to a calculator's result; a compiled charge already
+    reports its skipped modifiers in `TariffResult.warnings` (v1, base
+    rate only -- see this module's docstring), so this slot is a
+    pass-through, not `tariffs.modifiers`'s TNPA-specific surcharge
+    rules, which don't apply to a different (or even the same,
+    freshly re-extracted) rule set."""
+    return result
+
+
+def to_tariff_plan(compiled: dict[CanonicalCharge, Callable[[VesselCall, Any], TariffResult]]) -> dict[str, tuple]:
+    """Adapts `compile_report()`'s output into the exact shape
+    `tariffs/nlp.py`'s `_TARIFF_PLAN` uses -- `name -> (calc_fn, mod_fn,
+    dependency_met, missing_field)` -- so `parse_vessel_request(...,
+    tariff_plan=to_tariff_plan(compiled))` can call a compiled charge
+    exactly the way it calls a hand-written `calculators.py` one.
+
+    Reuses `_TARIFF_PLAN`'s own dependency checks (does this VesselCall
+    state a service count, a chargeable period?) unchanged -- those are
+    about what the vessel call itself says, not which authority's rates
+    are being used, so there's nothing authority-specific to re-derive."""
+    plan: dict[str, tuple] = {}
+    for charge, fn in compiled.items():
+        name = _RESULT_NAME.get(charge, charge.value)
+        if name not in _TARIFF_PLAN:
+            continue  # a charge tariffs/nlp.py doesn't (yet) plan for at all
+        _, _, dependency_met, missing_field = _TARIFF_PLAN[name]
+        plan[name] = (fn, _no_modifiers, dependency_met, missing_field)
+    return plan
