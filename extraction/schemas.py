@@ -237,6 +237,32 @@ class BasePlusIncrementTimesDurationShape(BaseModel):
     daily_rate: Optional[float] = None
 
 
+class KeyedRateRow(BaseModel):
+    """One row of a `keyed_rate` table -- a category label, verbatim as
+    this book spells it (a tug/vessel type, a named class -- never a
+    continuous numeric range; a table keyed by a range belongs in
+    `banded` instead), and its own flat amount or per-basis-unit rate.
+    `rate` multiplies the rule's own `basis` value (e.g. hours) --
+    there is no separate basis per row, the whole rule shares one."""
+
+    key: str = Field(description="The category label exactly as this book spells it, e.g. a tug name.")
+    flat_amount: Optional[float] = None
+    rate: Optional[float] = Field(default=None, description="Multiplies the rule's own `basis` value.")
+
+    @model_validator(mode="after")
+    def _exactly_one_value(self) -> "KeyedRateRow":
+        set_fields = [v for v in (self.flat_amount, self.rate) if v is not None]
+        if len(set_fields) != 1:
+            raise ValueError("exactly one of flat_amount, rate must be set")
+        return self
+
+
+class KeyedRateShape(BaseModel):
+    selected: bool = False
+    key_dimension: Optional[str] = Field(default=None, description="What the table is keyed by, in plain language, e.g. 'tug type'.")
+    keys: Optional[list[KeyedRateRow]] = None
+
+
 class PricingShapes(BaseModel):
     """One field per closed pricing type (tariffs/rules.py's
     `PricingType`), each a fixed, fully-typed shape rather than a free
@@ -266,6 +292,7 @@ class PricingShapes(BaseModel):
     base_plus_increment_times_duration: BasePlusIncrementTimesDurationShape = Field(
         default_factory=BasePlusIncrementTimesDurationShape
     )
+    keyed_rate: KeyedRateShape = Field(default_factory=KeyedRateShape)
 
     @model_validator(mode="after")
     def _exactly_one_selected_and_complete(self) -> "PricingShapes":
@@ -274,6 +301,7 @@ class PricingShapes(BaseModel):
             "base_plus_increment": self.base_plus_increment,
             "banded": self.banded,
             "base_plus_increment_times_duration": self.base_plus_increment_times_duration,
+            "keyed_rate": self.keyed_rate,
         }
         selected = [name for name, shape in shapes.items() if shape.selected]
         if len(selected) != 1:
@@ -286,6 +314,8 @@ class PricingShapes(BaseModel):
                     raise ValueError(f"selected shape {name!r} is missing required fields: {shape!r}")
                 if name == "banded" and not shape.bands:
                     raise ValueError("selected shape 'banded' requires at least one band.")
+                if name == "keyed_rate" and not shape.keys:
+                    raise ValueError("selected shape 'keyed_rate' requires at least one key.")
             elif any(v is not None for v in values):
                 raise ValueError(f"unselected shape {name!r} must not have any fields set: {shape!r}")
         return self
@@ -295,7 +325,7 @@ class PricingShapes(BaseModel):
         """Which shape is selected, as a plain string — derived, never a
         second independently-settable field that could disagree with
         what's actually populated."""
-        for name in ("per_unit", "base_plus_increment", "banded", "base_plus_increment_times_duration"):
+        for name in ("per_unit", "base_plus_increment", "banded", "base_plus_increment_times_duration", "keyed_rate"):
             if getattr(self, name).selected:
                 return name
         raise AssertionError("unreachable — the model validator guarantees exactly one selection")  # pragma: no cover
@@ -311,6 +341,8 @@ class PricingShapes(BaseModel):
         dumped = shape.model_dump(exclude={"selected"})
         if self.pricing_type == "banded" and dumped.get("bands"):
             dumped["bands"] = [b if isinstance(b, dict) else b.model_dump() for b in dumped["bands"]]
+        if self.pricing_type == "keyed_rate" and dumped.get("keys"):
+            dumped["keys"] = [k if isinstance(k, dict) else k.model_dump() for k in dumped["keys"]]
         return dumped
 
 

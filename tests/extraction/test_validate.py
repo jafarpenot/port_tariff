@@ -6,6 +6,8 @@ from extraction.schemas import (
     BasePlusIncrementShape,
     CanonicalCharge,
     ChargeExtraction,
+    KeyedRateRow,
+    KeyedRateShape,
     Modifier,
     PerUnitShape,
     PricingShapes,
@@ -33,6 +35,10 @@ def _per_unit(rate: float) -> PricingShapes:
 
 def _banded(bands: list[dict]) -> PricingShapes:
     return PricingShapes(banded=BandedShape(selected=True, bands=bands))
+
+
+def _keyed_rate(key_dimension: str, keys: list[KeyedRateRow]) -> PricingShapes:
+    return PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension=key_dimension, keys=keys))
 
 
 def test_valid_per_unit_rule_passes():
@@ -128,6 +134,49 @@ def test_negative_smoke_calculation_result_is_hard():
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is False
     assert any("negative" in i.message for i in result.issues)
+
+
+def test_valid_keyed_rate_rule_passes():
+    rule = ProposedRule(
+        basis="hours",
+        rounding_mode="exact",
+        pricing=_keyed_rate("tug type", [KeyedRateRow(key="Ghalilah", rate=1569.0), KeyedRateRow(key="Osprey", rate=6516.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is True
+    assert result.issues == []
+
+
+def test_keyed_rate_duplicate_key_is_hard():
+    rule = ProposedRule(
+        basis="hours",
+        rounding_mode="exact",
+        pricing=_keyed_rate("tug type", [KeyedRateRow(key="Ghalilah", rate=1569.0), KeyedRateRow(key="Ghalilah", rate=2000.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+    assert any("duplicate" in i.message for i in result.issues)
+
+
+def test_keyed_rate_negative_value_is_hard():
+    rule = ProposedRule(
+        basis="hours",
+        rounding_mode="exact",
+        pricing=_keyed_rate("tug type", [KeyedRateRow(key="Ghalilah", rate=-1.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+    assert any("negative" in i.message for i in result.issues)
+
+
+def test_keyed_rate_row_requires_exactly_one_value():
+    with pytest.raises(ValidationError):
+        KeyedRateRow(key="Ghalilah")
+    with pytest.raises(ValidationError):
+        KeyedRateRow(key="Ghalilah", flat_amount=1.0, rate=2.0)
 
 
 def test_numeric_value_not_on_cited_page_is_a_warning_not_a_block():

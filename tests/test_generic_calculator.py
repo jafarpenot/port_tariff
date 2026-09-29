@@ -11,6 +11,8 @@ from extraction.schemas import (
     BasePlusIncrementTimesDurationShape,
     CanonicalCharge,
     ChargeReportEntry,
+    KeyedRateRow,
+    KeyedRateShape,
     Modifier,
     PerUnitShape,
     PricingBand,
@@ -64,6 +66,61 @@ def test_base_plus_increment_times_duration_shape_requires_days():
     # ceil(51255/100)=513 units: basic = 513*10, incremental = 513*1*3.396
     amount = compute_base_amount(rule, 51_255, days=3.396)
     assert amount == pytest.approx(513 * 10.0 + 513 * 1.0 * 3.396)
+
+
+def test_keyed_rate_shape_requires_key():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", rate=1569.0)])),
+        basis="hours",
+    )
+    with pytest.raises(ValueError, match="requires `key`"):
+        compute_base_amount(rule, 10.0)
+
+
+def test_keyed_rate_shape_rate_row_multiplies_basis_value():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", rate=1569.0), KeyedRateRow(key="Osprey", rate=6516.0)])),
+        basis="hours",
+    )
+    assert compute_base_amount(rule, 3.0, key="Ghalilah") == pytest.approx(1569.0 * 3.0)
+    assert compute_base_amount(rule, 3.0, key="Osprey") == pytest.approx(6516.0 * 3.0)
+
+
+def test_keyed_rate_shape_flat_row_ignores_basis_value():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", flat_amount=500.0)])),
+        basis="hours",
+    )
+    assert compute_base_amount(rule, 999.0, key="Ghalilah") == pytest.approx(500.0)
+
+
+def test_keyed_rate_shape_unknown_key_raises_clearly():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", rate=1569.0)])),
+        basis="hours",
+    )
+    with pytest.raises(ValueError, match="no keyed_rate row matches"):
+        compute_base_amount(rule, 3.0, key="Nonexistent Tug")
+
+
+def test_keyed_rate_shape_end_to_end_via_compute_charge():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", rate=1569.0), KeyedRateRow(key="Osprey", rate=6516.0)])),
+        basis="hours",
+    )
+    call = VesselCall(port=Port.DURBAN, gross_tonnage=10.0, category_selection="Ghalilah", service_duration_hours=4.0)
+    result = compute_charge(rule, call, name="towage_dues")
+    assert result.amount == pytest.approx(1569.0 * 4.0)
+
+
+def test_keyed_rate_shape_missing_category_selection_raises_clearly():
+    rule = _rule(
+        PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension="tug type", keys=[KeyedRateRow(key="Ghalilah", rate=1569.0)])),
+        basis="hours",
+    )
+    call = VesselCall(port=Port.DURBAN, gross_tonnage=10.0, service_duration_hours=4.0)
+    with pytest.raises(ValueError, match="category_selection is required"):
+        compute_charge(rule, call, name="towage_dues")
 
 
 def test_maximum_caps_the_total_not_each_service():

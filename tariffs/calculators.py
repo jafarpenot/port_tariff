@@ -24,14 +24,20 @@ from .shapes import (
 
 def _basis_value(call: VesselCall, basis: Basis) -> float:
     """Which VesselCall field a tariff's declared Basis reads from
-    (extraction pipeline spec §4). Only GROSS_TONNAGE is wired — SPEC.md
-    §3: NT and DWT are on the vessel sheet but used by no tariff in this
-    book, and VesselCall carries no field for them."""
+    (extraction pipeline spec §4). GROSS_TONNAGE and HOURS are wired;
+    NT and DWT remain unwired — SPEC.md §3: on the vessel sheet but
+    used by no tariff in this book, and VesselCall carries no field for
+    them. HOURS was wired for RAK's keyed_rate towage table (an hourly
+    rate per tug) — the first tariff in this codebase to need it."""
     if basis is Basis.GROSS_TONNAGE:
         return call.gross_tonnage
+    if basis is Basis.HOURS:
+        if call.service_duration_hours is None:
+            raise ValueError("VesselCall.service_duration_hours is required for an hours-basis charge.")
+        return call.service_duration_hours
     raise NotImplementedError(
         f"basis {basis!r} is not wired to a VesselCall field — only "
-        "gross_tonnage is used by any tariff in this schedule (SPEC.md §3)."
+        "gross_tonnage and hours are used by any tariff in this schedule."
     )
 
 

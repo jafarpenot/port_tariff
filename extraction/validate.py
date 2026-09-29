@@ -89,14 +89,36 @@ def _validate_band_structure(bands: list[dict]) -> list[ValidationIssue]:
     return issues
 
 
+def _validate_keyed_rate_structure(keys: list[dict]) -> list[ValidationIssue]:
+    """No ordering/contiguity concept here (unlike `banded`'s numeric
+    ranges) — a keyed_rate table is a set of category rows, not a
+    sequence. What Pydantic can't express declaratively: no two rows
+    naming the same category (ambiguous which one applies), and no
+    negative value (a rate/flat_amount below zero is never legitimate
+    here, unlike a modifier's percentage which can be a discount)."""
+    issues: list[ValidationIssue] = []
+    seen: set[str] = set()
+    for row in keys:
+        if row["key"] in seen:
+            issues.append(_hard(f"keyed_rate has a duplicate key {row['key']!r} — each category must appear once."))
+        seen.add(row["key"])
+        value = row["flat_amount"] if row["flat_amount"] is not None else row["rate"]
+        if value is not None and value < 0:
+            issues.append(_hard(f"keyed_rate key {row['key']!r} has a negative value ({value})."))
+    return issues
+
+
 def _validate_pricing(rule: ProposedRule) -> list[ValidationIssue]:
     """Required-keys-per-shape is enforced structurally now, by
     `PricingShapes`'s own model validator (extraction/schemas.py) — a
     `ChargeExtraction` with a malformed pricing shape can't be
     constructed at all, so it never reaches here. Only band
-    ordering/contiguity is left to check."""
+    ordering/contiguity (banded) or key uniqueness (keyed_rate) is left
+    to check."""
     if rule.pricing.banded.selected:
         return _validate_band_structure(rule.pricing_params["bands"])
+    if rule.pricing.keyed_rate.selected:
+        return _validate_keyed_rate_structure(rule.pricing_params["keys"])
     return []
 
 
@@ -117,6 +139,9 @@ def _smoke_calculate(rule: ProposedRule) -> list[ValidationIssue]:
     known_pricing_types = {pt.value for pt in PricingType}
     if rule.pricing_type not in known_pricing_types:
         return issues  # unknown pricing_type already flagged elsewhere
+    if rule.pricing_type == PricingType.KEYED_RATE.value:
+        return issues  # a category table has no single per-basis-value amount to smoke-test;
+        # duplicate/negative-value checks already happened in _validate_pricing instead.
 
     try:
         for units in _SMOKE_TEST_UNITS:
