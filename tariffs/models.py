@@ -145,6 +145,20 @@ class VesselCall(BaseModel):
         ),
     )
 
+    # generic categorical input -- deliberately not authority-specific. Feeds a
+    # `keyed_rate`-shaped charge (tariffs.generic_calculator) whose table is keyed by a
+    # non-numeric category (a tug name, a vessel class) instead of a numeric basis. A single
+    # slot, not a dict of many dimensions -- extend only if a real book needs more than one.
+    category_selection: Optional[str] = Field(default=None, description="Which category applies, for a charge keyed by a non-numeric category (e.g. a tug name), ONLY if explicitly stated.")
+    service_duration_hours: Optional[float] = Field(
+        default=None,
+        description=(
+            "How many hours a service (e.g. tug engagement) took, ONLY if explicitly stated. "
+            "Distinct from chargeable_period_days, which is the vessel's port-dues chargeable "
+            "period, not any one service's duration."
+        ),
+    )
+
     def resolved_marine_service_count(self) -> tuple[Optional[int], str]:
         """Three-tier resolution (SPEC.md §8.2): stated > derived > unresolved.
 

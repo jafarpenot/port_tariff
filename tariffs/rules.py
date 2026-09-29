@@ -130,3 +130,6 @@ class PricingType(str, Enum):
     BASE_PLUS_INCREMENT = "base_plus_increment"
     BANDED = "banded"
     BASE_PLUS_INCREMENT_TIMES_DURATION = "base_plus_increment_times_duration"
+    KEYED_RATE = "keyed_rate"  # a table keyed by a non-numeric category (a tug/vessel type, a
+    # named class) -- never a continuous numeric range, that's BANDED's job. Added for RAK
+    # Ports' tug-selection-keyed towage table, which no single-basis shape above can represent.

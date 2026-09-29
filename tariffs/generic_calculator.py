@@ -39,7 +39,9 @@ _RESULT_NAME = {
 }
 
 
-def compute_base_amount(rule: ProposedRule, basis_value: float, *, days: Optional[float] = None) -> float:
+def compute_base_amount(
+    rule: ProposedRule, basis_value: float, *, days: Optional[float] = None, key: Optional[str] = None
+) -> float:
     """One service instance's raw amount for `rule`, dispatched on
     `rule.pricing_type` -- no `rule.maximum` cap and no multiplicity
     applied here, since both are the caller's responsibility. Validate's
@@ -47,6 +49,9 @@ def compute_base_amount(rule: ProposedRule, basis_value: float, *, days: Optiona
     caps the *total* after multiplying by service count, not each
     instance before -- capping here would silently do the wrong thing
     for a multi-service charge.
+
+    `key` selects a row for `keyed_rate` (a tug name, a vessel class) --
+    required for that shape, ignored by every other shape.
     """
     rounding = RoundingSpec(mode=RoundingMode(rule.rounding_mode), unit=rule.rounding_unit)
     pt = rule.pricing_type
@@ -74,6 +79,15 @@ def compute_base_amount(rule: ProposedRule, basis_value: float, *, days: Optiona
             basis_value, rule.pricing_params["basic_rate"], rule.pricing_params["daily_rate"], days, rounding
         )
         return result.total
+    if pt == PricingType.KEYED_RATE.value:
+        if key is None:
+            raise ValueError("pricing_type 'keyed_rate' requires `key`")
+        row = _match_category_key(key, rule.pricing_params["keys"])
+        if row is None:
+            raise ValueError(f"no keyed_rate row matches {key!r} (known: {[r['key'] for r in rule.pricing_params['keys']]})")
+        if row["flat_amount"] is not None:
+            return row["flat_amount"]
+        return row["rate"] * basis_value
     raise ValueError(f"unknown pricing_type {pt!r}")
 
 
@@ -87,6 +101,12 @@ def compute_charge(
     docstring); a result is never silently presented as complete when a
     modifier was actually needed.
     """
+    key = None
+    if rule.pricing_type == PricingType.KEYED_RATE.value:
+        if call.category_selection is None:
+            raise ValueError(f"{name}: VesselCall.category_selection is required for this pricing_type.")
+        key = call.category_selection
+
     basis_value = _basis_value(call, Basis(rule.basis))
 
     days = None
@@ -96,7 +116,7 @@ def compute_charge(
         time_spec = TimeSpec(unit_hours=rule.time_unit_hours, rounding=rule.time_rounding) if rule.time_unit_hours and rule.time_rounding else None
         days = round_time(call.chargeable_period_days, time_spec)
 
-    per_service_amount = compute_base_amount(rule, basis_value, days=days)
+    per_service_amount = compute_base_amount(rule, basis_value, days=days, key=key)
     services, service_note = _services_for(call, rule.multiplicity)
     amount = _apply_maximum(round(per_service_amount * services, 2), rule.maximum)
 
@@ -125,47 +145,63 @@ def compute_charge(
 _NEGATION_WORDS = ("excluding", "except", "other than")
 
 
-def _normalize_port_key(key: str) -> str:
-    return " ".join(key.replace("/", " ").replace("_", " ").split()).lower()
+def _normalize_label(label: str) -> str:
+    return " ".join(label.replace("/", " ").replace("_", " ").split()).lower()
+
+
+def _match_label(value: str, candidates: list[str]) -> Optional[str]:
+    """Shared matcher behind both `_match_port_key` (a dict of per-port
+    rules) and `_match_category_key` (a list of keyed_rate rows) --
+    same failure mode either way: a book sometimes combines entries
+    ('Port Elizabeth / Ngqura'), renames a leftover bucket ('Other' vs.
+    'Other Ports'), or names one as a negation of the entries that *do*
+    have their own row ('all ports excluding Durban...' -- found live:
+    contains the substring "durban", which a naive substring check
+    matched instead of the real, exact 'Durban' entry next to it).
+
+    Every candidate is checked for an *exact* match first, before a
+    substring match is tried on any candidate -- an exact match must
+    always win over an accidental substring hit. A negation-worded
+    candidate is never substring-matched at all; it's only reachable
+    via the single-catch-all fallback, same as 'Other'."""
+    if value in candidates:
+        return value
+
+    normalized_target = _normalize_label(value)
+    normalized = {c: _normalize_label(c) for c in candidates}
+
+    for candidate, normalized_candidate in normalized.items():
+        if normalized_target == normalized_candidate:
+            return candidate
+
+    for candidate, normalized_candidate in normalized.items():
+        if any(word in normalized_candidate for word in _NEGATION_WORDS):
+            continue
+        if normalized_target in normalized_candidate:
+            return candidate
+
+    catch_all = [c for c, nc in normalized.items() if "other" in nc or any(word in nc for word in _NEGATION_WORDS)]
+    if len(catch_all) == 1:
+        return catch_all[0]
+    return None
 
 
 def _match_port_key(port_value: str, per_port_rules: dict[str, ProposedRule]) -> Optional[str]:
     """`VesselCall.port` values are the registry's own snake_case names
     ('richards_bay'); extracted `per_port_rules` keys are the book's own
-    spelling ('Richards Bay'), and TNPA sometimes combines ports across
-    charges ('Port Elizabeth / Ngqura'), renames the leftover bucket
-    ('Other' vs. 'Other Ports'), or names it as a negation of the ports
-    that *do* have their own entry ('all ports excluding Durban and
-    Saldanha Bay' -- found live: this contains the substring "durban",
-    which a naive substring check matched instead of the real, exact
-    'Durban' key sitting right next to it in the same dict).
+    spelling ('Richards Bay'). See `_match_label` for the matching
+    strategy shared with `_match_category_key`."""
+    return _match_label(port_value, list(per_port_rules))
 
-    Every key is checked for an *exact* match first, across the whole
-    dict, before a substring match is tried on any key -- an exact
-    match must always win over an accidental substring hit. A negation
-    key is never substring-matched at all (it names ports it explicitly
-    is NOT for); it's only ever reached via the single-catch-all
-    fallback, same as 'Other'."""
-    if port_value in per_port_rules:
-        return port_value
 
-    normalized_target = " ".join(port_value.replace("_", " ").split()).lower()
-    normalized = {key: _normalize_port_key(key) for key in per_port_rules}
-
-    for key, normalized_key in normalized.items():
-        if normalized_target == normalized_key:
-            return key
-
-    for key, normalized_key in normalized.items():
-        if any(word in normalized_key for word in _NEGATION_WORDS):
-            continue
-        if normalized_target in normalized_key:
-            return key
-
-    catch_all = [key for key, normalized_key in normalized.items() if "other" in normalized_key or any(word in normalized_key for word in _NEGATION_WORDS)]
-    if len(catch_all) == 1:
-        return catch_all[0]
-    return None
+def _match_category_key(value: str, keys: list[dict]) -> Optional[dict]:
+    """Same matching strategy as `_match_port_key`, generalised to any
+    keyed_rate category (a tug name, a vessel class) instead of a port
+    name specifically. Returns the matching row dict, or None."""
+    matched = _match_label(value, [row["key"] for row in keys])
+    if matched is None:
+        return None
+    return next(row for row in keys if row["key"] == matched)
 
 
 def compile_charge(charge: CanonicalCharge, entry: ChargeReportEntry, *, currency: str = "ZAR") -> Callable[[VesselCall, Any], TariffResult]:
