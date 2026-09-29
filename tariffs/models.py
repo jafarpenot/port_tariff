@@ -136,6 +136,14 @@ class VesselCall(BaseModel):
     vessel_without_own_power: Optional[bool] = Field(default=None, description="Whether the vessel was serviced without her own power, ONLY if explicitly stated.")
     service_cancelled_after_standby: Optional[bool] = Field(default=None, description="Whether a requested service was cancelled after standby had commenced, ONLY if explicitly stated.")
     late_against_notified_time: Optional[bool] = Field(default=None, description="Whether the vessel arrived/departed 30+ minutes after the notified time, ONLY if explicitly stated.")
+    service_duration_hours: Optional[float] = Field(
+        default=None,
+        description=(
+            "How many hours a service (e.g. tug engagement) took, ONLY if explicitly stated. "
+            "Distinct from chargeable_period_days, which is the vessel's port-dues chargeable "
+            "period, not any one service's duration."
+        ),
+    )
 
     def resolved_marine_service_count(self) -> tuple[Optional[int], str]:
         """Three-tier resolution (SPEC.md §8.2): stated > derived > unresolved.
