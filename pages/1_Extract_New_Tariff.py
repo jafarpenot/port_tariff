@@ -18,6 +18,8 @@ and still needs its own ANTHROPIC_API_KEY.
 import os
 import re
 import tempfile
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,6 +59,7 @@ try:
 
     from extraction.graph import build_graph
     from extraction.llm import default_llm
+    from extraction.run_log import run_log_path
     from extraction.schemas import VerifierSeverity
 except ImportError:
     st.error(
@@ -166,20 +169,47 @@ if st.button("Run extraction", type="primary", disabled=not uploaded):
         tmp_path = tmp.name
 
     thread_id = str(uuid.uuid4())
-    config = {"configurable": {"thread_id": thread_id, "llm": default_llm()}, "recursion_limit": 80}
+    llm = default_llm()
+    config = {"configurable": {"thread_id": thread_id, "llm": llm}, "recursion_limit": 80}
+    # Set here, not left for node_split to generate, so this page can compute the
+    # exact same live-log path independently and tail it below (run_log_path() is
+    # a pure function of thread_id/run_started_at/llm -- same inputs, same path).
+    run_started_at = time.time()
+    log_path = run_log_path(thread_id=thread_id, run_started_at=run_started_at, llm=llm)
 
-    with st.spinner("Running extraction — split, map, extract, validate, verify. This takes a while."):
+    graph = _get_graph()  # resolved on this (Streamlit-managed) thread, not the worker below
+    outcome: dict = {}
+
+    def _run_graph() -> None:
         try:
-            result = _get_graph().invoke({"pdf_path": tmp_path}, config=config)
-        except Exception as exc:  # broken program, not a bad request — see app.py's same pattern
-            st.exception(exc)
-            st.stop()
-        finally:
-            os.unlink(tmp_path)
+            outcome["result"] = graph.invoke({"pdf_path": tmp_path, "run_started_at": run_started_at}, config=config)
+        except Exception as exc:  # surfaced on the main thread below, not raised here
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_run_graph, daemon=True)
+    worker.start()
+
+    st.subheader("Live progress")
+    st.caption("Tailing the same live trace file `docker compose logs -f app | grep '\\[graph\\]'` would show.")
+    log_placeholder = st.empty()
+    with st.spinner("Running extraction — split, map, extract, validate, verify. This takes a while."):
+        while worker.is_alive():
+            if log_path and log_path.exists():
+                log_placeholder.code(log_path.read_text(), language=None)
+            time.sleep(1.5)
+        worker.join()
+        if log_path and log_path.exists():
+            log_placeholder.code(log_path.read_text(), language=None)
+
+    os.unlink(tmp_path)
+
+    if "error" in outcome:
+        st.exception(outcome["error"])
+        st.stop()
 
     st.session_state["extract_thread_id"] = thread_id
     st.session_state["extract_config"] = config
-    st.session_state["extract_result"] = result
+    st.session_state["extract_result"] = outcome["result"]
 
 result = st.session_state["extract_result"]
 if result is not None:
