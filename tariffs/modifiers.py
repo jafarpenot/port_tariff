@@ -8,7 +8,7 @@ unless the input explicitly supports it.** `None` is never coerced to
 `False` — every modifier considered is recorded in the trace, whether it
 fired, was explicitly ruled out, or was left unresolved.
 
-Interpretations recorded here (see README for the full list):
+Interpretations recorded here (see docs/calculator.md §5 for the full list):
 - 60% port dues reduction beats 35% (mutually exclusive; §9.1).
 - 10% and 15% port dues reductions stack multiplicatively onto whatever
   reduction (0%, 35% or 60%) already applied — the book only states this

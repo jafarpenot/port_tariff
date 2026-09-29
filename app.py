@@ -116,7 +116,7 @@ if st.button("Calculate", type="primary") and request_text.strip():
     st.subheader("Tariffs")
     # "berthing_services" is what actually answers the assignment's
     # "running of vessel lines dues" — carried in its own "note" column
-    # below (README §3), not just documented separately.
+    # below (docs/calculator.md §3), not just documented separately.
     tariff_rows = []
     for name, outcome in result.tariffs.items():
         row = {

@@ -37,7 +37,7 @@ _TARIFF_LABELS = {
     "pilotage_dues": "Pilotage dues",
     # "berthing_services" everywhere (the honest domain name), consistent
     # with the API/Streamlit — the §3.8/§3.9 explanation is printed as a
-    # separate note line right below it instead (README §3).
+    # separate note line right below it instead (docs/calculator.md §3).
     "berthing_services": "Berthing services",
 }
 

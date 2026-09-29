@@ -69,7 +69,7 @@ def calculate_endpoint(payload: CalculateRequest) -> dict[str, Any]:
         "tariffs": {
             # "berthing_services" is what actually answers the assignment's
             # "running of vessel lines dues" — carried here as its own
-            # "note" key (README §3), not just documented separately.
+            # "note" key (docs/calculator.md §3), not just documented separately.
             name: {
                 "computed": outcome.computed,
                 "amount": outcome.result.amount if outcome.computed and outcome.result else None,
