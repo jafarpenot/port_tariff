@@ -23,11 +23,18 @@ testing.
    extraction-only cost choice made after the calculator itself was
    already built and evaluated against Claude; ~20x cheaper per token).
 2. Open the **"Extract a New Tariff"** page from the sidebar. Upload any
-   port authority's tariff PDF.
+   port authority's tariff PDF. A **"Charges extracted in parallel"**
+   control (default 3) sets how many of the six charges extract at
+   once — a book with modest per-charge context (TNPA) is fine at 3–4;
+   a larger or more token-heavy book (RAK Ports is one example — single
+   extraction calls there used ~150k of a 200k tokens-per-minute
+   budget) can hit the LLM provider's rate limit if several such calls
+   run concurrently. Lower it toward 1 (fully sequential, slower but
+   safest) if a run comes back with "system error" statuses.
 3. The pipeline runs — several minutes, many real LLM calls, well under
-   a dollar for a book the size of TNPA's. The page shows a spinner; to
-   watch it work instead, tail the container logs:
-   `docker compose logs -f app | grep '\[graph\]'`.
+   a dollar for a book the size of TNPA's. The page streams the live
+   run log in place, so you can watch each stage (structure scan, map,
+   extract, verify) as it happens rather than staring at a bare spinner.
 4. Review the report: authority/currency, per-charge outcome, any
    verifier findings, any unresolved disagreements. **Approve** it, and
    it's saved to `extracted_reports/` (one JSON file per approval).
@@ -36,6 +43,14 @@ testing.
    a vessel-call request exactly as you would for TNPA, and the computed
    amounts come from your freshly extracted rules instead of the
    hand-typed config.
+
+**Port names are still TNPA's, regardless of which book you selected.**
+The free-text request parser only recognizes the eight ports in
+`schedules/registry.yaml` (TNPA's) — that list isn't derived from
+whichever report you picked. So to test a freshly extracted non-TNPA
+book (e.g. RAK Ports), name one of TNPA's eight ports in the request
+(e.g. "Durban") anyway; it's just used to satisfy the parser; the rates
+computed still come entirely from the extracted book, not from TNPA.
 
 ---
 
@@ -194,6 +209,9 @@ it's ready. See `KNOWN_ISSUES.md` for the live findings.
 - **Reports are not versioned or diffed** — approving a second extraction
   of the same book just adds another file to `extracted_reports/`; there
   is no merge/compare-against-previous mechanism.
+- **The request parser only accepts TNPA's eight port names**, no matter
+  which book you selected for compute (§1) — there's no port registry
+  per extracted book.
 - See `KNOWN_ISSUES.md` for specific, dated findings from live testing
   (page-citation reliability, table-of-contents merge bugs, a
   retry-feedback fix, a port-matching bug, and others) — most already

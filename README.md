@@ -12,6 +12,14 @@ Two capabilities, one app:
 
 Both live in the same Streamlit app.
 
+> **Extracting a large book?** The Extract page has a "Charges
+> extracted in parallel" control (default 3). A book with modest
+> per-charge context (TNPA) is fine at 3–4; a larger or more
+> token-heavy book (RAK Ports is one example) can hit the LLM
+> provider's rate limit at the default — lower it toward 1 (fully
+> sequential, slower but safest) if you see "system error" statuses
+> after a run. Details: `docs/extraction.md` §1.
+
 ---
 
 ## Run it
@@ -95,6 +103,11 @@ a fresh extraction — same numbers, same match. Technical detail on both:
   applied.
 - **The API doesn't support Extract yet** — computing against a freshly
   extracted report is currently a Streamlit-only capability.
+- **The request parser only accepts TNPA's eight port names**, even when
+  computing against a different, freshly extracted book (e.g. RAK
+  Ports) — name a TNPA port (e.g. "Durban") in the request anyway; it
+  only satisfies the parser, the computed rates still come entirely
+  from the extracted book. Details: `docs/extraction.md` §1.
 - **TNPA is the only book validated end-to-end** for Extract (upload →
   approve → compute → matches a real reference case). A second book (RAK
   Ports, structurally different from TNPA) was used to stress-test the
