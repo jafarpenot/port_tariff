@@ -57,6 +57,7 @@ st.caption(
 try:
     from langgraph.types import Command
 
+    from extraction.extract import DEFAULT_CONCURRENCY_LIMIT
     from extraction.graph import build_graph
     from extraction.llm import default_llm
     from extraction.run_log import run_log_path
@@ -159,6 +160,22 @@ for key, default in [
 uploaded = st.file_uploader("Port tariff PDF", type=["pdf"])
 st.caption("A run makes many real LLM calls and can take several minutes, depending on the book's length.")
 
+concurrency_limit = st.number_input(
+    "Charges extracted in parallel",
+    min_value=1,
+    max_value=6,
+    value=DEFAULT_CONCURRENCY_LIMIT,
+    help=(
+        "How many of the six charges extract at once. A book like TNPA, with modest "
+        "per-charge context, is fine at 3-4. A larger or more token-heavy book -- one "
+        "where Map ends up attaching many more pages per charge (RAK Ports is one "
+        "example, found live: single extraction calls there used ~150k of a 200k "
+        "tokens-per-minute budget) -- can hit the LLM provider's rate limit when "
+        "several such calls run at once; lower this toward 1 (fully sequential, "
+        "slower but safest) if you see 'system error' statuses after a run."
+    ),
+)
+
 if st.button("Run extraction", type="primary", disabled=not uploaded):
     st.session_state["extract_result"] = None
     st.session_state["extract_decision"] = None
@@ -170,7 +187,10 @@ if st.button("Run extraction", type="primary", disabled=not uploaded):
 
     thread_id = str(uuid.uuid4())
     llm = default_llm()
-    config = {"configurable": {"thread_id": thread_id, "llm": llm}, "recursion_limit": 80}
+    config = {
+        "configurable": {"thread_id": thread_id, "llm": llm, "concurrency_limit": concurrency_limit},
+        "recursion_limit": 80,
+    }
     # Set here, not left for node_split to generate, so this page can compute the
     # exact same live-log path independently and tail it below (run_log_path() is
     # a pure function of thread_id/run_started_at/llm -- same inputs, same path).
