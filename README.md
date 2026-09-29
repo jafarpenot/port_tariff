@@ -59,7 +59,15 @@ answer key exactly, on all six charges. Details: `docs/calculator.md` §2.
 **The same case, from a freshly LLM-extracted copy of the same book.**
 Independently — no hand-typed config involved — the Extract pipeline
 re-read TNPA's own tariff PDF from scratch, and the generic compute
-engine computed the *same reference vessel call* against what it found:
+engine computed the *same reference vessel call* against what it found.
+
+What was actually run: `Port Tariff.pdf` uploaded on the "Extract a New
+Tariff" page, the pipeline's proposed rules reviewed and approved
+(saved to `extracted_reports/`), that report picked from the main
+calculator's "Tariff book" dropdown in place of "TNPA (existing)," and
+the same reference vessel-call request submitted through it — the
+identical end-to-end path a real user would follow, not a script
+calling internals directly:
 
 | Charge | Fresh extraction | Reference |
 |---|---|---|
@@ -72,8 +80,11 @@ engine computed the *same reference vessel call* against what it found:
 
 **All six match to the cent.** Two completely independent paths — a
 human transcribing the book by hand, and an LLM pipeline reading the
-same book fresh — arriving at the same numbers. Full writeup:
-`docs/extraction.md` §5.
+same book fresh — arriving at the same numbers, through the actual app,
+not just a standalone script. (This same result was also reproduced
+separately as a standalone script, calling the compiler directly against
+a fresh extraction — same numbers, same match. Technical detail on both:
+`docs/extraction.md` §5.)
 
 ---
 
