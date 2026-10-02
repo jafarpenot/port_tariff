@@ -35,4 +35,9 @@ def make_tools(page_texts: dict[int, str]) -> list:
         read a section a lead pointed you to."""
         return "\n\n".join(f"[page {p}]\n{page_texts.get(p, '')}" for p in range(start_page, end_page + 1))
 
-    return [search_document, read_pages]
+    @tool
+    def get_page_count() -> int:
+        """How many pages this document has."""
+        return max(page_texts) if page_texts else 0
+
+    return [search_document, read_pages, get_page_count]

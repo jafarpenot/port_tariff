@@ -62,15 +62,71 @@ class ProvisionalIdentity(BaseModel):
     )
 
 
+class ScanContentType(str, Enum):
+    """A `ScannedSection`'s coarse content type — distinct from
+    `SectionType` above (which only distinguishes charge/general_terms/
+    irrelevant, used by Map's per-window sections): this one separates
+    the *base/standard* rate calculation from a *modifier/exception* on
+    top of it, the distinction structure-aware Map (Stage 2) is built to
+    exploit."""
+
+    BASE_RATE = "base_rate"
+    MODIFIER_OR_EXCEPTION = "modifier_or_exception"
+    GENERAL_TERMS = "general_terms"
+    IRRELEVANT = "irrelevant"
+
+
+class ScanConfidence(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ScannedSection(BaseModel):
+    """One section of the book, as confirmed (not merely guessed from a
+    table of contents) by the structure-scan tool loop actually reading
+    at least its first page or two. `start_page`/`end_page` are real PDF
+    page numbers, already corrected for any printed-vs-PDF offset —
+    never the book's own printed numbers verbatim."""
+
+    heading: str
+    section_number: Optional[str] = None
+    start_page: int
+    end_page: int
+    content_type: ScanContentType
+    confidence: ScanConfidence = Field(
+        description="'high' only if you actually read a page from this section via a tool "
+        "call and confirmed it; a boundary taken on faith from the table of contents alone "
+        "is 'medium' at most, never 'high'."
+    )
+    description: str = Field(description="A short description of what's actually here, confirmed by reading the page(s) — not just the ToC title.")
+    affects_charges: list[CanonicalCharge] = Field(
+        default_factory=list, description="Which canonical charge types this section's content relates to, if any."
+    )
+
+
 class StructureScanResult(BaseModel):
-    """Node 1 — Structure scan's output. A single free-text field, not a
-    rigid shape — the whole point of this node is to catch whatever
-    wasn't anticipated (an unusual layout, a misleading ToC), so a fixed
-    schema would defeat it. Wrapped in a one-field model only to reuse
-    structured_call()'s existing retry machinery; the field itself is
-    unconstrained prose."""
+    """Node 1 — Structure scan's output. `notes` is free prose, kept for
+    anything that doesn't fit the structured fields below — an unusual
+    layout, a concern, anything unanticipated — the same "don't lose
+    what wasn't anticipated" reasoning this field always had. `sections`
+    and the page-offset fields are new: a verified (tool-read, not
+    ToC-guessed) structural map Stage 2's Map node can act on, gated by
+    each section's own `confidence`."""
 
     notes: str
+    page_offset_confirmed: bool = Field(
+        default=False, description="True only if you actually read a page via a tool call and compared its own printed page number to its real position in this PDF."
+    )
+    page_offset: Optional[int] = Field(
+        default=None,
+        description="printed_page_number + page_offset = pdf_page_number, if a single consistent offset was confirmed across the pages you checked. "
+        "Null if not checked, inconsistent across pages, or the book has no printed page numbers to compare.",
+    )
+    sections: list[ScannedSection] = Field(
+        default_factory=list,
+        description="Every section you identified, each confirmed by reading at least its first page via a tool call — never a section copied straight from the table of contents without checking it.",
+    )
 
 
 # ---------------------------------------------------------------------------

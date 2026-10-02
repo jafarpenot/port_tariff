@@ -60,6 +60,7 @@ class PipelineState(TypedDict, total=False):
     pdf_path: str
     run_started_at: float
     structure_notes: str
+    structure_scan: Any
 
     page_texts: dict[int, str]
     provisional_identity: Any
@@ -117,7 +118,8 @@ def node_structure_scan(state: PipelineState, config) -> dict:
     if state.get("structure_notes"):
         return {}
     llm = _cfg(config, "llm")
-    return {"structure_notes": scan_structure(state["pdf_path"], llm)}
+    result = scan_structure(state["pdf_path"], llm)
+    return {"structure_notes": result.notes, "structure_scan": result}
 
 
 def node_split(state: PipelineState, config) -> dict:

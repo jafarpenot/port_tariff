@@ -55,6 +55,67 @@ STRUCTURE_SCAN_SYSTEM_PROMPT = (
 )
 
 
+STRUCTURE_SCAN_EXPLORATION_SYSTEM_PROMPT = (
+    "You just formed a first-glance impression of a port tariff book (given below), "
+    "purely from looking at the whole thing once. That impression is an unverified "
+    "guess — table-of-contents page numbers in particular are known to be "
+    "unreliable. Your job now is to check it, the way a person would actually "
+    "flip through a book to confirm what they think they saw, using the tools "
+    "available to you (`read_pages`, `search_document`, `get_page_count`) — not by "
+    "reasoning about the impression alone.\n\n"
+    "Do two things, in order, each bounded — you do not need to use every "
+    "round available, stop as soon as you are confident:\n\n"
+    "1. VALIDATE THE PAGE NUMBERING. If the book has its own printed page numbers, "
+    "pick 2-3 pages (from different parts of the document, including at least one "
+    "section the impression claims comes after the opening pages) and read them "
+    "with `read_pages` to see what the book's own printed page number is "
+    "alongside each one's real position in this PDF. If every page you check "
+    "shows the same consistent offset (e.g. the book's 'page 15' is always this "
+    "PDF's page 8), that offset is confirmed. If there's no consistent offset, or "
+    "the book has no printed page numbers at all, say so plainly rather than "
+    "guessing one.\n\n"
+    "2. CONFIRM EACH SECTION. For each section your first-glance impression "
+    "claimed, read its first page or two (using the offset you just confirmed, if "
+    "any, to find the right PDF pages) and check: is this actually what the "
+    "impression said it was? What is its real page range? And — the main "
+    "reason for this check — is what you're reading the *base/standard rate "
+    "calculation* for a charge, a *modifier, exception, surcharge or condition* "
+    "on top of one, general *definitions/terms*, or genuinely *irrelevant* to any "
+    "vessel-call charge? A section can contain more than one of these — note "
+    "that rather than forcing one label if it's a mix.\n\n"
+    "Only ever call `read_pages`/`search_document` — do not attempt a calculation "
+    "or quote a numeric rate; another step handles that later with the real "
+    "pages attached. When you are done checking (or have used your available "
+    "rounds), stop calling tools — your final message should summarize what you "
+    "confirmed, corrected, and could not confirm."
+)
+
+
+STRUCTURE_SCAN_FINAL_SYSTEM_PROMPT = (
+    "You are given a first-glance impression of a port tariff book and a record "
+    "of what was actually confirmed by reading specific pages (page numbers, "
+    "offsets, and section content). Turn this into a final structured answer:\n"
+    "- `page_offset_confirmed`/`page_offset`: only set these from what was "
+    "actually checked by reading a page — never from the table of contents "
+    "alone. Leave `page_offset_confirmed` false if no page was actually read to "
+    "verify it.\n"
+    "- `sections`: one entry per section that was actually confirmed by reading "
+    "it, with its real PDF page range (offset-corrected), its `content_type` "
+    "(`base_rate`, `modifier_or_exception`, `general_terms`, or `irrelevant`), "
+    "and `confidence` — `high` only for a section whose first page(s) were "
+    "actually read and matched the impression; `medium` if read but uncertain, "
+    "or boundaries partially inferred; `low` for anything taken on faith from "
+    "the table of contents and never actually checked. Never mark `high` for a "
+    "section nobody actually looked at.\n"
+    "- `notes`: anything else worth flagging that doesn't fit the above — an "
+    "unusual layout, a concern, something the checking round couldn't resolve.\n\n"
+    "Be conservative with confidence: an over-confident wrong answer here can "
+    "cause a later step to skip pages it should have read, while a correctly "
+    "low-confidence answer just falls back to reading everything — the safer "
+    "failure mode by far."
+)
+
+
 IDENTITY_SYSTEM_PROMPT = (
     "You identify a tariff book's own metadata from its opening pages: the "
     "issuing authority, jurisdiction, the ports it covers, the schedule's name, "

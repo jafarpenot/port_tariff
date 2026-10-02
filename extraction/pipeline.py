@@ -215,8 +215,9 @@ def run_pipeline(
         print(f"[pipeline] {msg}", file=sys.stderr, flush=True)
         append_trace(log_path, msg)
 
-    structure_notes = scan_structure(pdf_path, llm)
-    log(f"structure_scan: {len(structure_notes)} chars")
+    structure_scan_result = scan_structure(pdf_path, llm)
+    structure_notes = structure_scan_result.notes
+    log(f"structure_scan: {len(structure_notes)} chars, {len(structure_scan_result.sections)} section(s) confirmed")
 
     page_texts = page_texts or split_pdf(pdf_path)
     identity = provisional_identity(page_texts, llm, structure_notes=structure_notes)
