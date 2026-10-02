@@ -11,6 +11,8 @@ from extraction.schemas import (
     BasePlusIncrementTimesDurationShape,
     CanonicalCharge,
     ChargeReportEntry,
+    DailyRateTier,
+    FreePeriodTieredDailyRateShape,
     KeyedRateRow,
     KeyedRateShape,
     Modifier,
@@ -19,6 +21,8 @@ from extraction.schemas import (
     PricingShapes,
     ProposedRule,
     SemanticOutcome,
+    TieredUnitRateShape,
+    TieredUnitRateTier,
 )
 from tariffs.generic_calculator import compile_charge, compile_report, compute_base_amount, compute_charge, to_tariff_plan
 from tariffs.models import Port, VesselCall
@@ -123,6 +127,91 @@ def test_keyed_rate_shape_missing_category_selection_raises_clearly():
         compute_charge(rule, call, name="towage_dues")
 
 
+def test_tiered_unit_rate_shape_applies_whole_value_not_marginal():
+    # Port of Fortaleza-style: one flat rate per tonne for the ENTIRE shipment,
+    # selected by which tier the total falls in -- never base + marginal increment.
+    rule = _rule(
+        PricingShapes(
+            tiered_unit_rate=TieredUnitRateShape(
+                selected=True,
+                tiers=[
+                    TieredUnitRateTier(min_exclusive=0, max_inclusive=25000, rate=1.51),
+                    TieredUnitRateTier(min_exclusive=25000, max_inclusive=40000, rate=1.31),
+                    TieredUnitRateTier(min_exclusive=40000, max_inclusive=None, rate=0.74),
+                ],
+            )
+        ),
+        basis="cargo_tonnes",
+    )
+    assert compute_base_amount(rule, 10_000) == pytest.approx(10_000 * 1.51)
+    assert compute_base_amount(rule, 30_000) == pytest.approx(30_000 * 1.31)  # not 25_000*1.51 + 5_000*1.31
+    assert compute_base_amount(rule, 50_000) == pytest.approx(50_000 * 0.74)
+
+
+def test_tiered_unit_rate_shape_value_outside_all_tiers_raises_clearly():
+    rule = _rule(
+        PricingShapes(tiered_unit_rate=TieredUnitRateShape(selected=True, tiers=[TieredUnitRateTier(min_exclusive=0, max_inclusive=100, rate=1.0)])),
+        basis="cargo_tonnes",
+    )
+    with pytest.raises(ValueError, match="does not fall into any configured tier"):
+        compute_base_amount(rule, 500)
+
+
+def test_free_period_tiered_daily_rate_shape_requires_days():
+    rule = _rule(
+        PricingShapes(free_period_tiered_daily_rate=FreePeriodTieredDailyRateShape(selected=True, free_days=0, tiers=[DailyRateTier(up_to_day=None, rate_per_unit_per_day=1.0)])),
+        rounding_mode="exact",
+    )
+    with pytest.raises(ValueError, match="requires `days`"):
+        compute_base_amount(rule, 1.0)
+
+
+def test_free_period_tiered_daily_rate_shape_free_period_charges_nothing():
+    rule = _rule(
+        PricingShapes(
+            free_period_tiered_daily_rate=FreePeriodTieredDailyRateShape(
+                selected=True, free_days=10, tiers=[DailyRateTier(up_to_day=None, rate_per_unit_per_day=1.49)]
+            )
+        ),
+        rounding_mode="exact",
+    )
+    assert compute_base_amount(rule, 1.0, days=7) == pytest.approx(0.0)
+
+
+def test_free_period_tiered_daily_rate_shape_escalates_progressively_across_tiers():
+    # Port of LA-style: $24.93/day days 1-5, $49.60/day days 6-10, $99.20/day day 11+.
+    # 12 chargeable days (no free period) -> 5 + 5 + 2 days across the three tiers.
+    rule = _rule(
+        PricingShapes(
+            free_period_tiered_daily_rate=FreePeriodTieredDailyRateShape(
+                selected=True,
+                free_days=0,
+                tiers=[
+                    DailyRateTier(up_to_day=5, rate_per_unit_per_day=24.93),
+                    DailyRateTier(up_to_day=10, rate_per_unit_per_day=49.60),
+                    DailyRateTier(up_to_day=None, rate_per_unit_per_day=99.20),
+                ],
+            )
+        ),
+        rounding_mode="exact",
+    )
+    expected = 1.0 * (5 * 24.93 + 5 * 49.60 + 2 * 99.20)
+    assert compute_base_amount(rule, 1.0, days=12) == pytest.approx(expected)
+
+
+def test_free_period_tiered_daily_rate_shape_free_period_then_one_tier():
+    # Port Miami-style: 10 free days, then $1.49/ton/day. 3 chargeable days at 2 tons.
+    rule = _rule(
+        PricingShapes(
+            free_period_tiered_daily_rate=FreePeriodTieredDailyRateShape(
+                selected=True, free_days=10, tiers=[DailyRateTier(up_to_day=None, rate_per_unit_per_day=1.49)]
+            )
+        ),
+        rounding_mode="exact",
+    )
+    assert compute_base_amount(rule, 2.0, days=13) == pytest.approx(2.0 * 3 * 1.49)
+
+
 def test_maximum_caps_the_total_not_each_service():
     rule = _rule(
         PricingShapes(per_unit=PerUnitShape(selected=True, rate=100.0)),
@@ -159,6 +248,56 @@ def test_modifiers_are_reported_but_never_applied():
     assert result.amount == pytest.approx(51_255.0)  # no modifier applied
     assert any("not applied" in w for w in result.warnings)
     assert "outside ordinary working hours" in result.warnings[0]
+
+
+def test_modifier_computes_when_its_required_field_is_stated_true():
+    rule = _rule(
+        PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)),
+        rounding_mode="exact",
+        modifiers=[Modifier(condition="additional tug requested", adjustment_percentage=25.0, required_vessel_field="additional_tug_requested")],
+    )
+    call = VesselCall(port=Port.DURBAN, gross_tonnage=51_255, additional_tug_requested=True)
+    result = compute_charge(rule, call, name="test_charge")
+    assert result.amount == pytest.approx(51_255.0 * 1.25)
+    assert not result.warnings
+    assert any("applied" in step.description for step in result.trace)
+
+
+def test_modifier_not_computable_when_its_required_field_is_unstated():
+    rule = _rule(
+        PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)),
+        rounding_mode="exact",
+        modifiers=[Modifier(condition="additional tug requested", adjustment_percentage=25.0, required_vessel_field="additional_tug_requested")],
+    )
+    result = compute_charge(rule, _CALL, name="test_charge")  # _CALL leaves additional_tug_requested unset (None)
+    assert result.amount == pytest.approx(51_255.0)  # base rate only, not applied
+    assert any("not computable" in w for w in result.warnings)
+
+
+def test_modifier_resolved_false_applies_nothing_and_warns_nothing():
+    rule = _rule(
+        PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)),
+        rounding_mode="exact",
+        modifiers=[Modifier(condition="additional tug requested", adjustment_percentage=25.0, required_vessel_field="additional_tug_requested")],
+    )
+    call = VesselCall(port=Port.DURBAN, gross_tonnage=51_255, additional_tug_requested=False)
+    result = compute_charge(rule, call, name="test_charge")
+    assert result.amount == pytest.approx(51_255.0)
+    assert not result.warnings  # explicitly ruled out, not "not computable"
+
+
+def test_modifier_flat_amount_computes_and_stacks_with_percentage():
+    rule = _rule(
+        PricingShapes(per_unit=PerUnitShape(selected=True, rate=1.0)),
+        rounding_mode="exact",
+        modifiers=[
+            Modifier(condition="additional tug requested", adjustment_percentage=10.0, required_vessel_field="additional_tug_requested"),
+            Modifier(condition="late against notified time", adjustment_flat_amount=500.0, required_vessel_field="late_against_notified_time"),
+        ],
+    )
+    call = VesselCall(port=Port.DURBAN, gross_tonnage=1000, additional_tug_requested=True, late_against_notified_time=True)
+    result = compute_charge(rule, call, name="test_charge")
+    assert result.amount == pytest.approx(1000 * 1.10 + 500.0)
 
 
 def _entry(charge, **kwargs) -> ChargeReportEntry:

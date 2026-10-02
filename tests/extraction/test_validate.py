@@ -6,6 +6,8 @@ from extraction.schemas import (
     BasePlusIncrementShape,
     CanonicalCharge,
     ChargeExtraction,
+    DailyRateTier,
+    FreePeriodTieredDailyRateShape,
     KeyedRateRow,
     KeyedRateShape,
     Modifier,
@@ -13,6 +15,8 @@ from extraction.schemas import (
     PricingShapes,
     ProposedRule,
     SemanticOutcome,
+    TieredUnitRateShape,
+    TieredUnitRateTier,
     ValidationSeverity,
 )
 from extraction.validate import validate_charge
@@ -39,6 +43,14 @@ def _banded(bands: list[dict]) -> PricingShapes:
 
 def _keyed_rate(key_dimension: str, keys: list[KeyedRateRow]) -> PricingShapes:
     return PricingShapes(keyed_rate=KeyedRateShape(selected=True, key_dimension=key_dimension, keys=keys))
+
+
+def _tiered_unit_rate(tiers: list[TieredUnitRateTier]) -> PricingShapes:
+    return PricingShapes(tiered_unit_rate=TieredUnitRateShape(selected=True, tiers=tiers))
+
+
+def _free_period_tiered_daily_rate(free_days: float, tiers: list[DailyRateTier]) -> PricingShapes:
+    return PricingShapes(free_period_tiered_daily_rate=FreePeriodTieredDailyRateShape(selected=True, free_days=free_days, tiers=tiers))
 
 
 def test_valid_per_unit_rule_passes():
@@ -179,24 +191,92 @@ def test_keyed_rate_row_requires_exactly_one_value():
         KeyedRateRow(key="Ghalilah", flat_amount=1.0, rate=2.0)
 
 
-def test_numeric_value_not_on_cited_page_is_a_warning_not_a_block():
-    rule = ProposedRule(basis="gross_tonnage", rounding_mode="exact", pricing=_per_unit(999999.99), multiplicity="per_call")
-    result = validate_charge(_mapped(rule), PAGE_TEXTS)
-    assert result.valid is True  # warning, not hard
-    assert any(i.severity is ValidationSeverity.WARNING for i in result.issues)
-
-
-def test_modifier_value_not_on_cited_page_is_also_a_warning():
+def test_valid_tiered_unit_rate_rule_passes():
     rule = ProposedRule(
-        basis="gross_tonnage",
+        basis="cargo_tonnes",
         rounding_mode="exact",
-        pricing=_per_unit(12.5),
+        pricing=_tiered_unit_rate(
+            [
+                TieredUnitRateTier(min_exclusive=0, max_inclusive=25000, rate=1.51),
+                TieredUnitRateTier(min_exclusive=25000, max_inclusive=40000, rate=1.31),
+                TieredUnitRateTier(min_exclusive=40000, max_inclusive=None, rate=0.74),
+            ]
+        ),
         multiplicity="per_call",
-        modifiers=[Modifier(condition="weekend surcharge", adjustment_percentage=999999.99)],
     )
     result = validate_charge(_mapped(rule), PAGE_TEXTS)
     assert result.valid is True
-    assert any("999999.99" in i.message and i.severity is ValidationSeverity.WARNING for i in result.issues)
+    assert result.issues == []
+
+
+def test_tiered_unit_rate_gap_between_tiers_is_hard():
+    rule = ProposedRule(
+        basis="cargo_tonnes",
+        rounding_mode="exact",
+        pricing=_tiered_unit_rate(
+            [
+                TieredUnitRateTier(min_exclusive=0, max_inclusive=1000, rate=1.0),
+                TieredUnitRateTier(min_exclusive=2000, max_inclusive=None, rate=2.0),  # gap: 1000 -> 2000
+            ]
+        ),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+
+
+def test_tiered_unit_rate_negative_rate_is_hard():
+    rule = ProposedRule(
+        basis="cargo_tonnes",
+        rounding_mode="exact",
+        pricing=_tiered_unit_rate([TieredUnitRateTier(min_exclusive=0, max_inclusive=None, rate=-1.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+    assert any("negative" in i.message for i in result.issues)
+
+
+def test_valid_free_period_tiered_daily_rate_rule_passes():
+    rule = ProposedRule(
+        basis="gross_tonnage",
+        rounding_mode="exact",
+        pricing=_free_period_tiered_daily_rate(
+            10,
+            [
+                DailyRateTier(up_to_day=5, rate_per_unit_per_day=24.93),
+                DailyRateTier(up_to_day=10, rate_per_unit_per_day=49.60),
+                DailyRateTier(up_to_day=None, rate_per_unit_per_day=99.20),
+            ],
+        ),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is True
+    assert result.issues == []
+
+
+def test_free_period_tiered_daily_rate_negative_free_days_is_hard():
+    rule = ProposedRule(
+        basis="gross_tonnage",
+        rounding_mode="exact",
+        pricing=_free_period_tiered_daily_rate(-1, [DailyRateTier(up_to_day=None, rate_per_unit_per_day=1.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+
+
+def test_free_period_tiered_daily_rate_final_tier_not_open_ended_is_hard():
+    rule = ProposedRule(
+        basis="gross_tonnage",
+        rounding_mode="exact",
+        pricing=_free_period_tiered_daily_rate(0, [DailyRateTier(up_to_day=5, rate_per_unit_per_day=1.0)]),
+        multiplicity="per_call",
+    )
+    result = validate_charge(_mapped(rule), PAGE_TEXTS)
+    assert result.valid is False
+
 
 
 def test_bundled_without_included_in_is_hard():

@@ -113,7 +113,12 @@ class StructureScanResult(BaseModel):
     what wasn't anticipated" reasoning this field always had. `sections`
     and the page-offset fields are new: a verified (tool-read, not
     ToC-guessed) structural map Stage 2's Map node can act on, gated by
-    each section's own `confidence`."""
+    each section's own `confidence`. `glossary` (Stage 4) is a byproduct
+    of the same exploration reads, not a separate pass: whenever a
+    `general_terms` section is read to confirm it, any marine/cargo
+    terminology defined there is worth keeping as shared background
+    context for every later node, the same way a human reader carries a
+    book's own definitions in mind once they've read them once."""
 
     notes: str
     page_offset_confirmed: bool = Field(
@@ -127,6 +132,11 @@ class StructureScanResult(BaseModel):
     sections: list[ScannedSection] = Field(
         default_factory=list,
         description="Every section you identified, each confirmed by reading at least its first page via a tool call — never a section copied straight from the table of contents without checking it.",
+    )
+    glossary: str = Field(
+        default="",
+        description="Marine/cargo terminology definitions actually read in a general_terms section during exploration, as short "
+        "term: definition entries — empty if no general_terms section was read, or none defined any unusual terminology.",
     )
 
 
@@ -338,6 +348,53 @@ class KeyedRateShape(BaseModel):
     keys: Optional[list[KeyedRateRow]] = None
 
 
+class TieredUnitRateTier(BaseModel):
+    """One tier of a `tiered_unit_rate` table -- a single per-unit rate
+    that applies to the WHOLE basis value once it falls in this tier's
+    range, never a marginal/incremental rate above a threshold (that's
+    `banded`'s job). Confirmed as a genuinely distinct real-world shape:
+    Port of Fortaleza's cargo tariff charges one flat rate per tonne for
+    the entire shipment, selected by which total-tonnage tier it falls
+    into (e.g. up to 25,000t -> R$1.51/t for all of it; 25,000-40,000t
+    -> R$1.31/t for all of it) -- not base-plus-increment-above-a-band."""
+
+    min_exclusive: float
+    max_inclusive: Optional[float] = None
+    rate: float = Field(description="Per-basis-unit rate applied to the ENTIRE basis value once it falls in this tier.")
+
+
+class TieredUnitRateShape(BaseModel):
+    selected: bool = False
+    tiers: Optional[list[TieredUnitRateTier]] = None
+
+
+class DailyRateTier(BaseModel):
+    """One escalating day-tier of a `free_period_tiered_daily_rate`
+    table -- e.g. Port of Los Angeles' container demurrage: $24.93/day
+    for days 1-5 (of the chargeable period), $49.60/day for days 6-10,
+    $99.20/day for day 11 onward. `up_to_day` is the day this tier's
+    rate stops applying (inclusive, counted from the end of any free
+    period) -- null for the last, open-ended tier."""
+
+    up_to_day: Optional[float] = None
+    rate_per_unit_per_day: float
+
+
+class FreePeriodTieredDailyRateShape(BaseModel):
+    """A free period before any charge starts, then one or more
+    escalating per-day rate tiers on top of the basis -- distinct from
+    `base_plus_increment_times_duration`'s single flat daily rate with
+    no free period. Confirmed as a genuinely distinct real-world shape:
+    PortMiami's wharf demurrage (10 days free, then $1.49/ton/day for
+    the next 7 days, $2.35/ton/day from day 8 on) and Port of Tampa's
+    container storage (free days, then an escalating per-day rate by
+    day-tier) both follow exactly this pattern."""
+
+    selected: bool = False
+    free_days: Optional[float] = None
+    tiers: Optional[list[DailyRateTier]] = None
+
+
 class PricingShapes(BaseModel):
     """One field per closed pricing type (tariffs/rules.py's
     `PricingType`), each a fixed, fully-typed shape rather than a free
@@ -368,6 +425,8 @@ class PricingShapes(BaseModel):
         default_factory=BasePlusIncrementTimesDurationShape
     )
     keyed_rate: KeyedRateShape = Field(default_factory=KeyedRateShape)
+    tiered_unit_rate: TieredUnitRateShape = Field(default_factory=TieredUnitRateShape)
+    free_period_tiered_daily_rate: FreePeriodTieredDailyRateShape = Field(default_factory=FreePeriodTieredDailyRateShape)
 
     @model_validator(mode="after")
     def _exactly_one_selected_and_complete(self) -> "PricingShapes":
@@ -377,6 +436,8 @@ class PricingShapes(BaseModel):
             "banded": self.banded,
             "base_plus_increment_times_duration": self.base_plus_increment_times_duration,
             "keyed_rate": self.keyed_rate,
+            "tiered_unit_rate": self.tiered_unit_rate,
+            "free_period_tiered_daily_rate": self.free_period_tiered_daily_rate,
         }
         selected = [name for name, shape in shapes.items() if shape.selected]
         if len(selected) != 1:
@@ -391,16 +452,30 @@ class PricingShapes(BaseModel):
                     raise ValueError("selected shape 'banded' requires at least one band.")
                 if name == "keyed_rate" and not shape.keys:
                     raise ValueError("selected shape 'keyed_rate' requires at least one key.")
+                if name == "tiered_unit_rate" and not shape.tiers:
+                    raise ValueError("selected shape 'tiered_unit_rate' requires at least one tier.")
+                if name == "free_period_tiered_daily_rate" and not shape.tiers:
+                    raise ValueError("selected shape 'free_period_tiered_daily_rate' requires at least one tier.")
             elif any(v is not None for v in values):
                 raise ValueError(f"unselected shape {name!r} must not have any fields set: {shape!r}")
         return self
+
+    _SHAPE_NAMES = (
+        "per_unit",
+        "base_plus_increment",
+        "banded",
+        "base_plus_increment_times_duration",
+        "keyed_rate",
+        "tiered_unit_rate",
+        "free_period_tiered_daily_rate",
+    )
 
     @property
     def pricing_type(self) -> str:
         """Which shape is selected, as a plain string — derived, never a
         second independently-settable field that could disagree with
         what's actually populated."""
-        for name in ("per_unit", "base_plus_increment", "banded", "base_plus_increment_times_duration", "keyed_rate"):
+        for name in self._SHAPE_NAMES:
             if getattr(self, name).selected:
                 return name
         raise AssertionError("unreachable — the model validator guarantees exactly one selection")  # pragma: no cover
@@ -414,17 +489,21 @@ class PricingShapes(BaseModel):
         into the specific shape object."""
         shape = getattr(self, self.pricing_type)
         dumped = shape.model_dump(exclude={"selected"})
-        if self.pricing_type == "banded" and dumped.get("bands"):
-            dumped["bands"] = [b if isinstance(b, dict) else b.model_dump() for b in dumped["bands"]]
-        if self.pricing_type == "keyed_rate" and dumped.get("keys"):
-            dumped["keys"] = [k if isinstance(k, dict) else k.model_dump() for k in dumped["keys"]]
+        list_field = {
+            "banded": "bands",
+            "keyed_rate": "keys",
+            "tiered_unit_rate": "tiers",
+            "free_period_tiered_daily_rate": "tiers",
+        }.get(self.pricing_type)
+        if list_field and dumped.get(list_field):
+            dumped[list_field] = [item if isinstance(item, dict) else item.model_dump() for item in dumped[list_field]]
         return dumped
 
 
 class Modifier(BaseModel):
     """A conditional surcharge, discount, or exemption on top of the
     base rate above — a weekend surcharge, a fee per additional tug, a
-    delay charge — not something the four fixed pricing shapes above are
+    delay charge — not something the fixed pricing shapes above are
     meant to express. Every modifier must be captured one way or
     another: `adjustment_percentage`/`adjustment_flat_amount` for the
     common cases, `raw_description` (a verbatim quote) when neither fits

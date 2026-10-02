@@ -36,7 +36,7 @@ from .map_node import map_document
 from .pdf import split_pdf
 from .report import build_report
 from .run_log import append_trace, finish_run, run_log_path, start_run
-from .structure_scan import scan_structure
+from .structure_scan import notes_with_glossary, scan_structure
 from .schemas import (
     CanonicalCharge,
     ChargeExtraction,
@@ -216,7 +216,7 @@ def run_pipeline(
         append_trace(log_path, msg)
 
     structure_scan_result = scan_structure(pdf_path, llm)
-    structure_notes = structure_scan_result.notes
+    structure_notes = notes_with_glossary(structure_scan_result)
     log(f"structure_scan: {len(structure_notes)} chars, {len(structure_scan_result.sections)} section(s) confirmed")
 
     page_texts = page_texts or split_pdf(pdf_path)

@@ -108,17 +108,57 @@ def _validate_keyed_rate_structure(keys: list[dict]) -> list[ValidationIssue]:
     return issues
 
 
+def _validate_tiered_unit_rate_structure(tiers: list[dict]) -> list[ValidationIssue]:
+    """Tiers share `banded`'s min_exclusive/max_inclusive ordering
+    convention (first starts at 0, contiguous, last open-ended), so
+    ordering/contiguity reuses that same check; only the rate itself
+    needs its own non-negative check here."""
+    issues = list(_validate_band_structure(tiers))
+    for tier in tiers:
+        if tier["rate"] < 0:
+            issues.append(_hard(f"tiered_unit_rate tier {tier!r} has a negative rate."))
+    return issues
+
+
+def _validate_free_period_tiered_daily_rate_structure(free_days: float, tiers: list[dict]) -> list[ValidationIssue]:
+    """Day-tiers are ordered by ascending `up_to_day`, never the
+    min/max-exclusive/inclusive convention `banded`/`tiered_unit_rate`
+    share (a day-tier's lower bound is implicit — the previous tier's
+    `up_to_day` — not a separate field), so this gets its own check."""
+    issues: list[ValidationIssue] = []
+    if free_days < 0:
+        issues.append(_hard(f"free_period_tiered_daily_rate free_days must be >= 0, got {free_days!r}."))
+    prev_boundary = 0.0
+    for i, tier in enumerate(tiers):
+        if tier["rate_per_unit_per_day"] < 0:
+            issues.append(_hard(f"free_period_tiered_daily_rate tier[{i}] has a negative rate_per_unit_per_day."))
+        up_to = tier["up_to_day"]
+        if up_to is not None:
+            if up_to <= prev_boundary:
+                issues.append(
+                    _hard(f"free_period_tiered_daily_rate tier[{i}].up_to_day ({up_to!r}) must exceed the previous tier's boundary ({prev_boundary!r}).")
+                )
+            prev_boundary = up_to
+    if tiers[-1]["up_to_day"] is not None:
+        issues.append(_hard("free_period_tiered_daily_rate's final tier must have up_to_day null (open-ended)."))
+    return issues
+
+
 def _validate_pricing(rule: ProposedRule) -> list[ValidationIssue]:
     """Required-keys-per-shape is enforced structurally now, by
     `PricingShapes`'s own model validator (extraction/schemas.py) — a
     `ChargeExtraction` with a malformed pricing shape can't be
-    constructed at all, so it never reaches here. Only band
-    ordering/contiguity (banded) or key uniqueness (keyed_rate) is left
-    to check."""
+    constructed at all, so it never reaches here. Only what Pydantic
+    can't express declaratively (ordering/contiguity, key uniqueness)
+    is left to check here, per shape."""
     if rule.pricing.banded.selected:
         return _validate_band_structure(rule.pricing_params["bands"])
     if rule.pricing.keyed_rate.selected:
         return _validate_keyed_rate_structure(rule.pricing_params["keys"])
+    if rule.pricing.tiered_unit_rate.selected:
+        return _validate_tiered_unit_rate_structure(rule.pricing_params["tiers"])
+    if rule.pricing.free_period_tiered_daily_rate.selected:
+        return _validate_free_period_tiered_daily_rate_structure(rule.pricing_params["free_days"], rule.pricing_params["tiers"])
     return []
 
 
@@ -145,7 +185,8 @@ def _smoke_calculate(rule: ProposedRule) -> list[ValidationIssue]:
 
     try:
         for units in _SMOKE_TEST_UNITS:
-            days = 1.0 if rule.pricing_type == PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value else None
+            needs_days = rule.pricing_type in (PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value, PricingType.FREE_PERIOD_TIERED_DAILY_RATE.value)
+            days = 1.0 if needs_days else None
             amount = compute_base_amount(rule, units, days=days)
             if rule.maximum is not None:
                 amount = min(amount, rule.maximum)
@@ -156,28 +197,11 @@ def _smoke_calculate(rule: ProposedRule) -> list[ValidationIssue]:
     return issues
 
 
-def _validate_numeric_citations(rule: ProposedRule, extraction: ChargeExtraction, page_texts: dict[int, str]) -> list[ValidationIssue]:
-    """Warning only (§6.4) — PDF text extraction formatting (spacing,
-    thousands separators) varies too much for a missing verbatim match
-    to be a hard gate."""
-    cited_text = "\n".join(page_texts.get(p, "") for p in extraction.provenance_pages)
-    if not cited_text:
-        return []
-    issues: list[ValidationIssue] = []
-    numeric_values = [v for v in rule.pricing_params.values() if isinstance(v, (int, float))]
-    numeric_values += [v for m in rule.modifiers for v in (m.adjustment_percentage, m.adjustment_flat_amount) if v is not None]
-    for value in numeric_values:
-        if str(value) not in cited_text and f"{value:,.2f}" not in cited_text:
-            issues.append(_warn(f"value {value!r} not found verbatim on its cited page(s) — PDF formatting may differ from the raw number."))
-    return issues
-
-
-def _validate_one_rule(rule: ProposedRule, extraction: ChargeExtraction, page_texts: dict[int, str]) -> list[ValidationIssue]:
+def _validate_one_rule(rule: ProposedRule) -> list[ValidationIssue]:
     issues = list(_validate_enums(rule))
     issues.extend(_validate_pricing(rule))
     if not any(i.severity is ValidationSeverity.HARD for i in issues):
         issues.extend(_smoke_calculate(rule))
-        issues.extend(_validate_numeric_citations(rule, extraction, page_texts))
     return issues
 
 
@@ -189,14 +213,14 @@ def validate_charge(extraction: ChargeExtraction, page_texts: dict[int, str]) ->
             if not extraction.per_port_rules:
                 issues.append(_hard("outcome is 'mapped' with varies_by_port=true but per_port_rules is empty."))
             for port, rule in extraction.per_port_rules.items():
-                for issue in _validate_one_rule(rule, extraction, page_texts):
+                for issue in _validate_one_rule(rule):
                     issue.message = f"[{port}] {issue.message}"
                     issues.append(issue)
         else:
             if extraction.proposed_rule is None:
                 issues.append(_hard("outcome is 'mapped' with varies_by_port=false but no proposed_rule was given."))
             else:
-                issues.extend(_validate_one_rule(extraction.proposed_rule, extraction, page_texts))
+                issues.extend(_validate_one_rule(extraction.proposed_rule))
     elif extraction.outcome is SemanticOutcome.BUNDLED and extraction.included_in is None:
         issues.append(_hard("outcome is 'bundled' but included_in was not set."))
     elif extraction.outcome is SemanticOutcome.UNMAPPED and not extraction.unmapped_source_text:

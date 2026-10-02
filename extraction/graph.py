@@ -48,7 +48,7 @@ from .schemas import (
     WindowMapResult,
     has_material_finding,
 )
-from .structure_scan import scan_structure
+from .structure_scan import notes_with_glossary, scan_structure
 from .validate import outcome_regression_issue, validate_all
 from .verify import verify_all
 
@@ -119,7 +119,7 @@ def node_structure_scan(state: PipelineState, config) -> dict:
         return {}
     llm = _cfg(config, "llm")
     result = scan_structure(state["pdf_path"], llm)
-    return {"structure_notes": result.notes, "structure_scan": result}
+    return {"structure_notes": notes_with_glossary(result), "structure_scan": result}
 
 
 def node_split(state: PipelineState, config) -> dict:

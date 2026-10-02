@@ -110,3 +110,14 @@ def scan_structure(pdf_path: str, llm: Any) -> StructureScanResult:
         transcript += "\n\nNo pages were read to check this impression — nothing below should be marked high confidence."
 
     return structured_call(llm, StructureScanResult, STRUCTURE_SCAN_FINAL_SYSTEM_PROMPT, transcript)
+
+
+def notes_with_glossary(result: StructureScanResult) -> str:
+    """Stage 4: folds `result.glossary` into the single advisory string
+    every other node already threads as `structure_notes` — deliberately
+    not a second parallel parameter through Identity/Map/Extract's ~10
+    call sites, since a glossary is exactly the same kind of thing
+    (advisory, never ground truth) `structure_notes` already is."""
+    if not result.glossary:
+        return result.notes
+    return result.notes + "\n\n---\nGlossary of terms defined in this book:\n" + result.glossary

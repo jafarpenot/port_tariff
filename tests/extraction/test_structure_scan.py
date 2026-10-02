@@ -1,7 +1,19 @@
 from extraction.schemas import ScanConfidence, ScanContentType, ScannedSection, StructureScanResult
-from extraction.structure_scan import scan_structure
+from extraction.structure_scan import notes_with_glossary, scan_structure
 
 from .conftest import StubChatModel, make_blank_pdf
+
+
+def test_notes_with_glossary_appends_when_present():
+    result = StructureScanResult(notes="A straightforward layout.", glossary="laytime: time allowed for loading/discharging.")
+    combined = notes_with_glossary(result)
+    assert combined.startswith("A straightforward layout.")
+    assert "laytime: time allowed for loading/discharging." in combined
+
+
+def test_notes_with_glossary_is_a_no_op_when_empty():
+    result = StructureScanResult(notes="A straightforward layout.")
+    assert notes_with_glossary(result) == "A straightforward layout."
 
 
 def test_scan_structure_attaches_the_whole_document_for_its_first_pass():

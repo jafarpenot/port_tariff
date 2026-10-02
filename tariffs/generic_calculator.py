@@ -88,7 +88,110 @@ def compute_base_amount(
         if row["flat_amount"] is not None:
             return row["flat_amount"]
         return row["rate"] * basis_value
+    if pt == PricingType.TIERED_UNIT_RATE.value:
+        tier = _select_tier(basis_value, rule.pricing_params["tiers"])
+        return tier["rate"] * basis_value
+    if pt == PricingType.FREE_PERIOD_TIERED_DAILY_RATE.value:
+        if days is None:
+            raise ValueError("pricing_type 'free_period_tiered_daily_rate' requires `days`")
+        return _free_period_tiered_daily_amount(
+            basis_value, rule.pricing_params["free_days"], rule.pricing_params["tiers"], days
+        )
     raise ValueError(f"unknown pricing_type {pt!r}")
+
+
+def _select_tier(value: float, tiers: list[dict]) -> dict:
+    """Lower bound exclusive, upper bound inclusive -- same convention
+    `tariffs/shapes.py`'s `_select_band` already uses for `banded`, kept
+    as a separate, self-contained matcher here rather than reusing
+    `Band` (whose field names -- `min_gt_exclusive`, `per_100t` -- are
+    GT/towage-specific, not a fit for a generic tiered rate)."""
+    for tier in tiers:
+        lower_ok = value > tier["min_exclusive"]
+        upper_ok = tier["max_inclusive"] is None or value <= tier["max_inclusive"]
+        if lower_ok and upper_ok:
+            return tier
+    raise ValueError(f"value {value} does not fall into any configured tier.")
+
+
+def _free_period_tiered_daily_amount(basis_value: float, free_days: float, tiers: list[dict], days: float) -> float:
+    """`basis_value x sum(days_in_tier x tier.rate_per_unit_per_day)`,
+    progressively across tiers in order -- not "look up one tier and
+    apply its rate to every chargeable day". Matches the real-world
+    citation this shape is based on (Port of LA's container demurrage:
+    days 1-5 at one rate, days 6-10 at the next, day 11+ at the last) --
+    an escalating ladder, not a single-tier lookup."""
+    chargeable_days = max(0.0, days - free_days)
+    if chargeable_days <= 0:
+        return 0.0
+    total = 0.0
+    prev_boundary = 0.0
+    remaining = chargeable_days
+    for tier in tiers:
+        up_to = tier["up_to_day"]
+        tier_span = (up_to - prev_boundary) if up_to is not None else remaining
+        days_in_tier = min(remaining, tier_span)
+        if days_in_tier > 0:
+            total += days_in_tier * tier["rate_per_unit_per_day"]
+            remaining -= days_in_tier
+        if up_to is not None:
+            prev_boundary = up_to
+        if remaining <= 0:
+            break
+    return basis_value * total
+
+
+def _apply_computable_modifiers(amount: float, modifiers: list, call: VesselCall) -> tuple[float, list[str], list[str], list[str]]:
+    """Stage 3: a modifier can now actually compute, but only the narrow
+    slice `Modifier.required_vessel_field` links to one of
+    `tariffs.models.MODIFIER_COMPATIBLE_VESSEL_FIELDS` -- every other
+    modifier stays exactly v1's report-only behavior (this module's
+    original docstring). Tri-state, same discipline `tariffs/modifiers.py`
+    already follows: `None` (unstated) is never coerced to `False`. A
+    field resolved explicitly to `False` means the condition does not
+    hold -- correctly resolved, nothing to apply, nothing to warn about,
+    not the same as "not computable" (field left unstated entirely).
+
+    Order of application for multiple computable modifiers: sequential,
+    in `rule.modifiers`' own order, each compounding onto the running
+    amount (percentage) or adding to it (flat) -- a recorded
+    simplification, not a claim about any specific book's stacking rule
+    (unlike `tariffs/modifiers.py`'s TNPA-specific documented stacking
+    interpretations); no book evaluated so far has needed anything more
+    precise for the generic engine.
+
+    The maximum cap (`rule.maximum`) is applied once, to the base amount
+    before any modifier -- treated as a property of the base rate table,
+    not re-applied after modifiers stack on top. Another recorded
+    simplification: no evaluated book's modifier text has stated whether
+    a cap is meant to bind the surcharged total too.
+
+    Returns `(amount, applied, not_computable, not_linked)` -- the three
+    note lists feed separate, distinctly-worded warnings/trace entries so
+    a human can tell "this changed the number", "this would change the
+    number if you told us more", and "this was never going to compute"
+    apart at a glance.
+    """
+    applied: list[str] = []
+    not_computable: list[str] = []
+    not_linked: list[str] = []
+    for m in modifiers:
+        if not m.required_vessel_field:
+            not_linked.append(m.condition)
+            continue
+        value = getattr(call, m.required_vessel_field, None)
+        if value is None:
+            not_computable.append(f"{m.condition} (requires {m.required_vessel_field} to be stated)")
+            continue
+        if value is False:
+            continue  # resolved: the condition does not hold -- not a warning, not a no-op worth reporting
+        if m.adjustment_percentage is not None:
+            amount = round(amount * (1 + m.adjustment_percentage / 100), 2)
+        elif m.adjustment_flat_amount is not None:
+            amount = round(amount + m.adjustment_flat_amount, 2)
+        # a raw_description-only modifier has no numeric adjustment to apply even once its condition resolves true
+        applied.append(m.condition)
+    return amount, applied, not_computable, not_linked
 
 
 def compute_charge(
@@ -96,10 +199,11 @@ def compute_charge(
 ) -> TariffResult:
     """The real (non-smoke-test) computation: a real basis value off
     `call`, real multiplicity, real time-rounding, `rule.maximum` applied
-    to the *total*. Every one of `rule.modifiers` is reported in
-    `warnings`, never applied -- v1 is base rate only (see this module's
-    docstring); a result is never silently presented as complete when a
-    modifier was actually needed.
+    to the base amount. A modifier computes only if
+    `Modifier.required_vessel_field` is set and `call` actually supplies
+    that field (see `_apply_computable_modifiers`); every other modifier
+    stays v1's report-only behavior -- a result is never silently
+    presented as complete when a modifier was actually needed.
     """
     key = None
     if rule.pricing_type == PricingType.KEYED_RATE.value:
@@ -110,7 +214,7 @@ def compute_charge(
     basis_value = _basis_value(call, Basis(rule.basis))
 
     days = None
-    if rule.pricing_type == PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value:
+    if rule.pricing_type in (PricingType.BASE_PLUS_INCREMENT_TIMES_DURATION.value, PricingType.FREE_PERIOD_TIERED_DAILY_RATE.value):
         if call.chargeable_period_days is None:
             raise ValueError(f"{name}: VesselCall.chargeable_period_days is required for this pricing_type.")
         time_spec = TimeSpec(unit_hours=rule.time_unit_hours, rounding=rule.time_rounding) if rule.time_unit_hours and rule.time_rounding else None
@@ -121,13 +225,6 @@ def compute_charge(
     amount = _apply_maximum(round(per_service_amount * services, 2), rule.maximum)
 
     warnings: list[str] = []
-    if rule.modifiers:
-        warnings.append(
-            f"{len(rule.modifiers)} modifier(s) not applied (base rate only): "
-            + "; ".join(m.condition for m in rule.modifiers)
-        )
-    assumptions = [service_note] if service_note else []
-
     trace = [
         TraceStep(
             tariff=name,
@@ -139,6 +236,30 @@ def compute_charge(
             subtotal=amount,
         )
     ]
+
+    if rule.modifiers:
+        amount, applied, not_computable, not_linked = _apply_computable_modifiers(amount, rule.modifiers, call)
+        if applied:
+            trace.append(
+                TraceStep(
+                    tariff=name,
+                    section=section,
+                    page=page,
+                    description="modifier(s) applied: " + "; ".join(applied),
+                    inputs={"applied": applied},
+                    subtotal=amount,
+                )
+            )
+        if not_computable:
+            warnings.append(
+                f"{len(not_computable)} modifier(s) not computable (missing vessel data): " + "; ".join(not_computable)
+            )
+        if not_linked:
+            warnings.append(
+                f"{len(not_linked)} modifier(s) not applied (base rate only): " + "; ".join(not_linked)
+            )
+
+    assumptions = [service_note] if service_note else []
     return TariffResult(name=name, amount=amount, currency=currency, trace=trace, warnings=warnings, assumptions=assumptions)
 
 

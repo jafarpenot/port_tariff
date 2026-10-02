@@ -133,3 +133,11 @@ class PricingType(str, Enum):
     KEYED_RATE = "keyed_rate"  # a table keyed by a non-numeric category (a tug/vessel type, a
     # named class) -- never a continuous numeric range, that's BANDED's job. Added for RAK
     # Ports' tug-selection-keyed towage table, which no single-basis shape above can represent.
+    TIERED_UNIT_RATE = "tiered_unit_rate"  # a single per-unit rate applied to the WHOLE basis
+    # value, selected by which tier it falls into -- unlike BANDED, never a marginal/incremental
+    # rate above a threshold. Confirmed real: Port of Fortaleza's cargo tariff (one flat rate
+    # per tonne for the entire shipment, by total-tonnage tier).
+    FREE_PERIOD_TIERED_DAILY_RATE = "free_period_tiered_daily_rate"  # a free period before any
+    # charge starts, then one or more escalating per-day rate tiers -- unlike
+    # BASE_PLUS_INCREMENT_TIMES_DURATION's single flat daily rate with no free period.
+    # Confirmed real: PortMiami wharf demurrage, Port of Tampa/LA container storage.
