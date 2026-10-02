@@ -12,6 +12,7 @@ from extraction.graph import REPAIR_BUDGET, VERIFY_BUDGET, build_graph
 from extraction.schemas import (
     CanonicalCharge,
     ChargeExtraction,
+    ModifierExtraction,
     PerUnitShape,
     PipelineStatus,
     PricingShapes,

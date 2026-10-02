@@ -539,6 +539,19 @@ class ChargeExtraction(BaseModel):
     )
 
 
+class ModifierExtraction(BaseModel):
+    """Stage 3's second, independent call per charge — modifiers only,
+    never the base rate or pricing shape (that's the base-rate call's
+    job, `ChargeExtraction` above). Best-effort by design: it is fine
+    for `modifiers` to come back empty, or for a condition that can't be
+    captured even as a verbatim `raw_description` to be noted in
+    `unmapped_modifier_notes` instead of forced into the `Modifier`
+    shape."""
+
+    modifiers: list[Modifier] = Field(default_factory=list)
+    unmapped_modifier_notes: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Node 6 — Validate
 # ---------------------------------------------------------------------------

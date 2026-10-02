@@ -5,6 +5,7 @@ from extraction.schemas import (
     CanonicalCharge,
     ChargeContext,
     ChargeExtraction,
+    ModifierExtraction,
     SemanticOutcome,
     ValidationIssue,
     ValidationSeverity,
@@ -66,6 +67,8 @@ def test_extract_charge_follows_a_lead_and_flags_it():
     seen_final_context = {}
 
     def respond(schema, messages):
+        if schema is ModifierExtraction:
+            return ModifierExtraction()
         seen_final_context["text"] = messages[-1].content
         return ChargeExtraction(charge=CanonicalCharge.PORT_DUES, outcome=SemanticOutcome.MAPPED)
 
@@ -98,6 +101,8 @@ def test_extract_charge_attaches_native_pdf_for_pages_found_via_a_read_pages_lea
     seen_final_content = {}
 
     def respond(schema, messages):
+        if schema is ModifierExtraction:
+            return ModifierExtraction()
         seen_final_content["content"] = messages[-1].content
         return ChargeExtraction(charge=CanonicalCharge.PORT_DUES, outcome=SemanticOutcome.MAPPED)
 
@@ -135,6 +140,8 @@ def test_repair_issues_are_folded_into_the_prompt():
     seen = {}
 
     def respond(schema, messages):
+        if schema is ModifierExtraction:
+            return ModifierExtraction()
         seen["text"] = messages[-1].content
         return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED)
 
@@ -167,6 +174,8 @@ def test_verifier_findings_are_folded_into_the_prompt():
     seen = {}
 
     def respond(schema, messages):
+        if schema is ModifierExtraction:
+            return ModifierExtraction()
         seen["text"] = messages[-1].content
         return ChargeExtraction(charge=CanonicalCharge.VTS, outcome=SemanticOutcome.MAPPED)
 
@@ -180,6 +189,8 @@ def test_verifier_findings_are_folded_into_the_prompt():
 
 def test_extract_charge_can_rebut_a_verifier_challenge_and_leave_proposal_unchanged():
     def respond(schema, messages):
+        if schema is ModifierExtraction:
+            return ModifierExtraction()
         return ChargeExtraction(
             charge=CanonicalCharge.VTS,
             outcome=SemanticOutcome.MAPPED,

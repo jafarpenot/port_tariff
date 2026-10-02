@@ -31,13 +31,15 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from .llm import structured_call
 from .pdf import extract_pdf_pages
-from .prompts import EXTRACT_SYSTEM_PROMPT, extract_user_prompt
+from .prompts import EXTRACT_SYSTEM_PROMPT, MODIFIER_SYSTEM_PROMPT, extract_user_prompt
 from .schemas import (
     CanonicalCharge,
     ChargeContext,
     ChargeExtraction,
+    ModifierExtraction,
     SectionConsidered,
     SectionConsideredStatus,
+    SemanticOutcome,
     ValidationIssue,
     VerifierFinding,
 )
@@ -109,6 +111,68 @@ def _charge_content(
         {"type": "text", "text": text},
         {"type": "file", "source_type": "base64", "mime_type": "application/pdf", "data": b64, "filename": f"{charge.value}-context.pdf"},
     ]
+
+
+def _modifier_content(
+    charge: CanonicalCharge, context: ChargeContext, pdf_path: str, structure_notes: str = ""
+) -> str | list:
+    """Same shape as `_charge_content`, but sourced from
+    `context.modifier_pages` — a separate, usually smaller page set —
+    instead of the base-rate `context.pages`. Stage 3's two calls per
+    charge are deliberately given different attachments, not just a
+    different prompt over the same pages."""
+    text = extract_user_prompt(
+        charge.value,
+        context.modifier_pages,
+        "",
+        pages_attached=bool(context.modifier_pages),
+        structure_notes=structure_notes,
+        map_notes=context.notes,
+    )
+    if not context.modifier_pages:
+        return text
+    pdf_bytes = extract_pdf_pages(pdf_path, context.modifier_pages)
+    b64 = base64.b64encode(pdf_bytes).decode()
+    return [
+        {"type": "text", "text": text},
+        {"type": "file", "source_type": "base64", "mime_type": "application/pdf", "data": b64, "filename": f"{charge.value}-modifiers.pdf"},
+    ]
+
+
+def _extract_modifiers(charge: CanonicalCharge, context: ChargeContext, pdf_path: str, llm: Any, structure_notes: str = "") -> ModifierExtraction:
+    """Stage 3's second, independent, best-effort call per charge — never
+    allowed to fail the charge as a whole (unlike the base-rate call):
+    a modifier that can't be found or a transient error here just means
+    an empty, unremarkable ModifierExtraction, not a lost charge."""
+    try:
+        return structured_call(
+            llm,
+            ModifierExtraction,
+            MODIFIER_SYSTEM_PROMPT,
+            _modifier_content(charge, context, pdf_path, structure_notes),
+        )
+    except Exception as exc:
+        return ModifierExtraction(unmapped_modifier_notes=[f"Modifier extraction failed ({type(exc).__name__}: {exc}) — not computed."])
+
+
+def _apply_modifiers(extraction: ChargeExtraction, modifier_result: ModifierExtraction) -> None:
+    """Merges the modifier call's findings into the base-rate
+    extraction's own ProposedRule(s), in place. Only meaningful for a
+    mapped outcome — a bundled/not_present/unmapped charge has no
+    ProposedRule to attach a modifier to. When the book varies this
+    charge by port, the same modifier list is applied to every port's
+    rule — a documented simplification: a modifier's condition (e.g.
+    "outside ordinary working hours") is typically charge-wide, not
+    port-specific, and this codebase has no evidence yet of a
+    port-specific modifier to the contrary."""
+    extraction.unmapped_modifier_notes = modifier_result.unmapped_modifier_notes
+    if extraction.outcome is not SemanticOutcome.MAPPED or not modifier_result.modifiers:
+        return
+    if extraction.varies_by_port:
+        for rule in extraction.per_port_rules.values():
+            rule.modifiers = modifier_result.modifiers
+    elif extraction.proposed_rule is not None:
+        extraction.proposed_rule.modifiers = modifier_result.modifiers
 
 
 def _run_tool_rounds(
@@ -191,6 +255,14 @@ def extract_charge(
                 found_via_lead=True,
             )
         )
+
+    # Stage 3's second, independent, best-effort call — never allowed to
+    # turn a successful base-rate extraction into a failed charge. Only
+    # worth running once there's a mapped rule to attach a modifier to.
+    if extraction.outcome is SemanticOutcome.MAPPED:
+        modifier_result = _extract_modifiers(charge, context, pdf_path, llm, structure_notes)
+        _apply_modifiers(extraction, modifier_result)
+
     return extraction
 
 

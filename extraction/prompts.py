@@ -15,6 +15,8 @@ TNPA fact.
 
 from __future__ import annotations
 
+from tariffs.models import MODIFIER_COMPATIBLE_VESSEL_FIELDS
+
 CANONICAL_CHARGES_TABLE = """\
 Canonical charge type | What it pays for
 light_dues | National navigation aids (lighthouses, buoys). Usually once per visit to the country, on tonnage.
@@ -293,15 +295,9 @@ EXTRACT_SYSTEM_PROMPT = (
     "of the base rate (an after-hours fee, a per-additional-unit charge, a "
     "delay fee, a coastal-status exemption) is never on its own a reason to "
     "decide 'unmapped' or to leave the whole charge unrepresented — put the "
-    "base rate in `pricing` as above, and put every such condition in "
-    "`modifiers`: a plain percentage or flat amount when it's that simple, "
-    "or a verbatim quote of the source when it isn't. Every modifier must "
-    "set exactly one of `adjustment_percentage`, `adjustment_flat_amount`, "
-    "or `raw_description` — never leave all three unset (a condition with "
-    "no separate numeric adjustment, e.g. one that only describes when "
-    "another charge applies instead, is still worth quoting verbatim into "
-    "`raw_description` rather than dropped), and never set more than one. "
-    "Only decide 'unmapped' "
+    "base rate in `pricing` as above and leave `modifiers` empty here; a "
+    "separate pass extracts those, you only need the base calculation. Only "
+    "decide 'unmapped' "
     "if the *base* calculation itself — not a modifier on top of it — "
     "doesn't fit any of the five pricing shapes.\n"
     "- bundled: this charge is billed, but only as part of another charge — "
@@ -322,6 +318,38 @@ EXTRACT_SYSTEM_PROMPT = (
     "only to follow a lead — an explicit reference in your context pointing "
     "outside it. Do not use it to go looking for a better answer once you "
     "already have one from your given context."
+)
+
+
+MODIFIER_SYSTEM_PROMPT = (
+    SCOPE_CONTRACT + "\n\n"
+    "You are extracting ONLY the modifiers — conditional surcharges, discounts, or "
+    "exemptions — for one canonical charge type, from the pages attached as a PDF. A "
+    "separate pass already handles this charge's base/standard rate calculation; do not "
+    "decide a pricing shape or a semantic outcome here, and do not report the base rate "
+    "itself as a modifier.\n\n"
+    "A modifier is any condition that changes the base amount on top of itself — an "
+    "after-hours fee, a per-additional-unit charge, a delay fee, a coastal-status "
+    "exemption, a tanker surcharge, and similar. For each one, set exactly one of "
+    "`adjustment_percentage`, `adjustment_flat_amount`, or `raw_description` (a verbatim "
+    "quote, for anything that doesn't reduce to a plain percentage or flat amount) — never "
+    "leave all three unset, and never set more than one.\n\n"
+    "Also set `required_vessel_field` whenever — and only whenever — a modifier's "
+    "condition maps cleanly onto one of this closed list of existing vessel-call inputs: "
+    f"{', '.join(MODIFIER_COMPATIBLE_VESSEL_FIELDS)}. For example, a condition reading "
+    "'if a tug beyond the standard allocation was requested' maps exactly to "
+    "`additional_tug_requested`; a condition that doesn't match one of these fields at all "
+    "(most will not — this list is short and specific) should leave `required_vessel_field` "
+    "null. Setting this correctly is what lets a modifier actually compute later, when the "
+    "request states that field, instead of only ever being reported — do not force a loose "
+    "or approximate match just to set it.\n\n"
+    "If a condition genuinely cannot be captured as a `Modifier` at all — not even as a "
+    "verbatim `raw_description` — note it in plain language in `unmapped_modifier_notes` "
+    "instead of dropping it silently. It is completely normal for `modifiers` to come back "
+    "empty if this charge genuinely has none in the attached pages; do not invent one to "
+    "avoid an empty list.\n\n"
+    "Every numeric value you report must literally appear in the attached pages. Never "
+    "invent a value, and never carry one over from any other tariff book."
 )
 
 
