@@ -152,17 +152,28 @@ def build_charge_contexts(sections: list[AssembledSection], map_results: list[Wi
                     _add(resolved)
 
         notes: list[str] = []
+        modifier_pages: set[int] = set()
         for window in map_results:
             for note in window.charge_notes:
                 if note.charge is not charge or not note.present:
                     continue
-                pages.update(range(window.window_start_page, window.window_end_page + 1))
                 notes.append(note.notes)
+                if note.base_pages or note.modifier_pages:
+                    # Map pinned specific pages down -- use those, narrower
+                    # than the whole window/section range.
+                    pages.update(note.base_pages)
+                    modifier_pages.update(note.modifier_pages)
+                else:
+                    # Couldn't pin it down -- fall back to the whole
+                    # window/section range for base, the original,
+                    # always-safe behaviour (nothing silently dropped).
+                    pages.update(range(window.window_start_page, window.window_end_page + 1))
 
         contexts[charge] = ChargeContext(
             charge=charge,
             section_numbers=section_numbers,
             pages=sorted(pages),
+            modifier_pages=sorted(modifier_pages),
             notes="\n\n".join(notes),
         )
     return contexts

@@ -1,5 +1,15 @@
-from extraction.map_node import DEFAULT_WINDOW_OVERLAP, DEFAULT_WINDOW_SIZE, map_document, window_ranges
-from extraction.schemas import CanonicalCharge, ChargeWindowNote, SectionType, WindowMapResult, WindowSection
+from extraction.map_node import DEFAULT_WINDOW_OVERLAP, DEFAULT_WINDOW_SIZE, build_ranges, map_document, window_ranges
+from extraction.schemas import (
+    CanonicalCharge,
+    ChargeWindowNote,
+    ScanConfidence,
+    ScanContentType,
+    ScannedSection,
+    SectionType,
+    StructureScanResult,
+    WindowMapResult,
+    WindowSection,
+)
 
 from .conftest import StubChatModel, make_blank_pdf, make_charge_notes, text_of
 
@@ -117,3 +127,79 @@ def test_map_document_folds_in_structure_notes_as_advisory_context():
 
     assert "A two-column layout throughout." in seen["user_text"]
     assert "for context only" in seen["user_text"]
+
+
+def _scan(*sections: ScannedSection) -> StructureScanResult:
+    return StructureScanResult(notes="", sections=list(sections))
+
+
+def test_build_ranges_with_no_structure_scan_matches_today_s_fixed_windows():
+    assert build_ranges(27, None, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP) == window_ranges(
+        27, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP
+    )
+
+
+def test_build_ranges_uses_a_high_confidence_section_s_own_bounds_as_one_call():
+    scan = _scan(
+        ScannedSection(
+            heading="Marine Tariff",
+            start_page=10,
+            end_page=15,
+            content_type=ScanContentType.BASE_RATE,
+            confidence=ScanConfidence.HIGH,
+            description="",
+        )
+    )
+    ranges = build_ranges(30, scan, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP)
+    assert (10, 15) in ranges  # tier 1: the section's own exact bounds, one call
+
+
+def test_build_ranges_covers_every_page_exactly_once_or_via_overlap_never_a_gap():
+    scan = _scan(
+        ScannedSection(
+            heading="Marine Tariff", start_page=10, end_page=15, content_type=ScanContentType.BASE_RATE,
+            confidence=ScanConfidence.HIGH, description="",
+        ),
+        ScannedSection(
+            heading="Cargo", start_page=20, end_page=22, content_type=ScanContentType.IRRELEVANT,
+            confidence=ScanConfidence.HIGH, description="",
+        ),
+    )
+    ranges = build_ranges(30, scan, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP)
+    covered = set()
+    for start, end in ranges:
+        covered.update(range(start, end + 1))
+    assert covered == set(range(1, 31))  # the non-negotiable coverage guarantee, structure-aware or not
+
+
+def test_build_ranges_ignores_medium_and_low_confidence_sections():
+    """Only a high-confidence, actually-verified section gets to narrow
+    Map's own behaviour — medium/low falls all the way back to tier 3's
+    uniform fixed windows, same as having no structure_scan at all."""
+    scan = _scan(
+        ScannedSection(
+            heading="Guessed from the ToC only", start_page=10, end_page=15, content_type=ScanContentType.BASE_RATE,
+            confidence=ScanConfidence.MEDIUM, description="",
+        )
+    )
+    ranges = build_ranges(30, scan, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP)
+    assert ranges == window_ranges(30, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP)
+
+
+def test_build_ranges_subwindows_an_oversized_high_confidence_section():
+    from extraction.map_node import MAX_SECTION_CALL_PAGES
+
+    big_end = 10 + MAX_SECTION_CALL_PAGES + 5
+    scan = _scan(
+        ScannedSection(
+            heading="Huge Annex", start_page=10, end_page=big_end, content_type=ScanContentType.BASE_RATE,
+            confidence=ScanConfidence.HIGH, description="",
+        )
+    )
+    ranges = build_ranges(big_end + 5, scan, DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_OVERLAP)
+    assert (10, big_end) not in ranges  # too large for one call
+    covered = set()
+    for start, end in ranges:
+        assert start >= 10 and end <= big_end or start > big_end or end < 10  # no window spills outside its own scope oddly
+        covered.update(range(start, end + 1))
+    assert set(range(10, big_end + 1)).issubset(covered)  # still fully covered, just sub-windowed

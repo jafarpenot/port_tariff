@@ -178,6 +178,31 @@ class VesselCall(BaseModel):
         return None, "unresolved: neither marine_service_count nor number_of_operations supplied"
 
 
+# A closed set of VesselCall's own tri-state boolean fields (True / False /
+# None="unresolved") — the only fields an extracted modifier's own
+# `required_vessel_field` (extraction/schemas.py's `Modifier`) is allowed to
+# name, so a generic "is the field present -> apply, else flag not
+# computable" compute-time dispatcher (tariffs/generic_calculator.py) never
+# has to parse a free-form condition string itself. Deliberately excludes
+# enum-valued fields (vessel_type, exemption_status) and list-valued ones
+# (hull_certification) — those need richer matching than a plain True/False
+# check, out of scope for this first pass at actually computing a modifier
+# rather than only reporting it.
+MODIFIER_COMPATIBLE_VESSEL_FIELDS = (
+    "engaged_in_cargo_working",
+    "is_bona_fide_coaster",
+    "is_passenger_vessel",
+    "is_first_sa_port_call",
+    "call_purpose_bunkers_stores_water_only",
+    "self_propelled",
+    "mooring_boat_used",
+    "additional_tug_requested",
+    "vessel_without_own_power",
+    "service_cancelled_after_standby",
+    "late_against_notified_time",
+)
+
+
 # ---------------------------------------------------------------------------
 # Results and trace (SPEC.md §12)
 # ---------------------------------------------------------------------------

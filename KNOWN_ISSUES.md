@@ -2,6 +2,51 @@
 
 Found live, not yet fixed. Each entry states what's wrong, where, and why it matters.
 
+## Stage 2's section-shaped Map narrows less than intended on RAK — the fallback union dominates
+
+Built as part of `structure-aware-extraction`'s Stage 2 (section-shaped Map,
+replacing fixed windows with the document's own confirmed sections). The
+mechanism works as designed — confirmed live on RAK: `build_ranges()` does
+call a confirmed high-confidence section's own tight bounds as one call
+(e.g. pages 46-50 for RAK's per-tug towage annex), and `ChargeWindowNote`'s
+new `base_pages`/`modifier_pages` fields do get populated with real,
+specific page numbers in several cases (e.g. `modifier_pages=[10, 13, 38,
+41, 47, 49, 50, 53, 56]` for towage on one live run).
+
+But the final `ChargeContext.pages` a charge actually ends up with is
+barely narrower than before the-change (48-50 of RAK's 58 pages, vs. the
+original fixed-window design's ~50+ page union) — essentially no
+improvement on the headline goal (tighter, more targeted contexts for
+better shape-matching and lower token use). Root cause, confirmed by
+inspecting the mechanism directly: `build_charge_contexts()`
+(`extraction/assemble.py`) unions EVERY window/section's charge_note
+flagged `present=True` for a charge — and when a note doesn't pinpoint
+`base_pages`/`modifier_pages` (which happens often: RAK's marine
+annexes legitimately cross-reference towage/port_dues from many places,
+and Map's own deliberate over-inclusion bias — "flag it, cheap to
+over-include" — means many windows flag a charge present just in case),
+that window's *entire* range still gets unioned in as a safety-net
+fallback. With ~20-30 overlapping windows/sections now in play (more than
+before, since tier-3 gaps between confirmed sections fragment into
+several small windows instead of one continuous pass), it only takes a
+handful of non-pinpointing "present" flags to reconstitute nearly the
+whole document — one tightening pass on `MAP_SYSTEM_PROMPT` (make
+pinpointing feel mandatory-by-default, not a free "leave it empty, it's
+safe" option) was tried live and did not meaningfully change this.
+
+**Not fixed, and deliberately not fixed unilaterally**: the actual lever is
+in `build_charge_contexts()` itself — change the union policy so that
+when *any* window/section genuinely pinpointed `base_pages` for a charge,
+those pinpointed pages are trusted *instead of* adding in every
+non-pinpointing window's full range, falling back to today's
+whole-window union only when nothing was ever pinpointed for that charge
+at all. This is a real precision-vs-safety tradeoff — it would mean
+trusting a confident window's narrow answer over a vaguer window's "it's
+somewhere in here" — in the same spirit as the original Map/Assemble
+design's deliberate "flag it, cheap to over-include" bias, so it is not
+something to flip on its own judgment; it needs an explicit decision from
+whoever owns that tradeoff before it's implemented.
+
 ## ~~graph.py has no per-charge exception isolation~~ — fixed
 
 Not a new bug, and not caused by today's graph.py work — this is the exact

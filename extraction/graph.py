@@ -162,9 +162,10 @@ def node_map(state: PipelineState, config) -> dict:
         overlap=_cfg(config, "overlap", DEFAULT_WINDOW_OVERLAP),
         concurrency_limit=_cfg(config, "concurrency_limit", DEFAULT_CONCURRENCY_LIMIT),
         structure_notes=state.get("structure_notes", ""),
+        structure_scan=state.get("structure_scan"),
     )
     total_sections = sum(len(w.sections) for w in results)
-    _log(state, config, f"map: {len(results)} windows, {total_sections} sections found")
+    _log(state, config, f"map: {len(results)} windows/sections, {total_sections} sections found")
     return {"map_results": results}
 
 

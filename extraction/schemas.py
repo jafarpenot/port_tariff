@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+from tariffs.models import MODIFIER_COMPATIBLE_VESSEL_FIELDS
 from tariffs.rules import Basis, Multiplicity, RoundingMode, TimeRounding
 
 
@@ -170,6 +171,16 @@ class ChargeWindowNote(BaseModel):
     charge: CanonicalCharge
     present: bool = Field(description="Is this charge discussed at all in these pages — a base rate, a surcharge, an exemption, or a cross-reference?")
     notes: str = Field(description="A paragraph on what's here and what kind of information it is. If not present, say so briefly rather than leaving this thin.")
+    base_pages: list[int] = Field(
+        default_factory=list,
+        description="Specific page number(s) actually seen holding this charge's BASE/STANDARD rate calculation — "
+        "never guessed or padded with the whole range. Empty if not present or not pinpointable.",
+    )
+    modifier_pages: list[int] = Field(
+        default_factory=list,
+        description="Specific page number(s) actually seen holding a MODIFIER/EXCEPTION/SURCHARGE/CONDITION on top "
+        "of this charge's base rate. Empty if none, or not pinpointable.",
+    )
 
 
 class WindowMapResult(BaseModel):
@@ -221,11 +232,19 @@ class ChargeContext(BaseModel):
     whether an omission is a Map/Assemble miss or an Extract reasoning
     failure. `notes` is what Extract actually reads as orientation —
     the concatenated per-window ChargeWindowNote paragraphs relevant to
-    this charge, advisory only, same as structure_notes."""
+    this charge, advisory only, same as structure_notes.
+
+    `pages` holds the base-rate pages (narrowed to specific `base_pages`
+    sightings when Map could pin them down, falling back to the whole
+    window/section range otherwise); `modifier_pages` is the same idea
+    for modifier/exception content — kept separate so Stage 3's split
+    base-rate/modifier Extract calls can each get a tight, targeted
+    attachment instead of one broad shared range."""
 
     charge: CanonicalCharge
     section_numbers: list[str] = Field(default_factory=list)
     pages: list[int] = Field(default_factory=list)
+    modifier_pages: list[int] = Field(default_factory=list)
     notes: str = ""
 
 
@@ -422,12 +441,31 @@ class Modifier(BaseModel):
     raw_description: Optional[str] = Field(
         default=None, description="Verbatim source text — use only when the adjustment doesn't fit a plain percentage or flat amount."
     )
+    required_vessel_field: Optional[str] = Field(
+        default=None,
+        description=(
+            "Set only if this modifier's condition maps cleanly onto one of a closed set of existing "
+            f"vessel-call inputs this tool already asks for: {', '.join(MODIFIER_COMPATIBLE_VESSEL_FIELDS)}. "
+            "Leave null for any condition that doesn't match one of these exactly (most will not) — this is "
+            "what lets a modifier actually compute when the request states that field, rather than only "
+            "ever being reported; it is not worth forcing a loose or approximate match."
+        ),
+    )
 
     @model_validator(mode="after")
     def _exactly_one_representation(self) -> "Modifier":
         set_fields = [f for f in (self.adjustment_percentage, self.adjustment_flat_amount, self.raw_description) if f is not None]
         if len(set_fields) != 1:
             raise ValueError("exactly one of adjustment_percentage, adjustment_flat_amount, raw_description must be set")
+        return self
+
+    @model_validator(mode="after")
+    def _required_vessel_field_is_from_the_closed_set(self) -> "Modifier":
+        if self.required_vessel_field is not None and self.required_vessel_field not in MODIFIER_COMPATIBLE_VESSEL_FIELDS:
+            raise ValueError(
+                f"required_vessel_field {self.required_vessel_field!r} is not one of the supported fields: "
+                f"{MODIFIER_COMPATIBLE_VESSEL_FIELDS!r}"
+            )
         return self
 
 
@@ -486,6 +524,11 @@ class ChargeExtraction(BaseModel):
     provenance_sections: list[str] = Field(default_factory=list)
     provenance_pages: list[int] = Field(default_factory=list)
     sections_considered: list[SectionConsidered] = Field(default_factory=list)
+    unmapped_modifier_notes: list[str] = Field(
+        default_factory=list,
+        description="Plain-language notes on any modifier/exception/condition that genuinely couldn't be "
+        "captured as a Modifier at all (not even raw_description) — flagged here rather than silently dropped.",
+    )
     rebuttal: Optional[str] = Field(
         default=None,
         description=(

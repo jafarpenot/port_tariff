@@ -224,7 +224,12 @@ def run_pipeline(
     log(f"identity: authority={identity.authority!r} currency={identity.currency!r}")
 
     map_results = map_document(
-        page_texts, llm, pdf_path=pdf_path, concurrency_limit=map_concurrency_limit, structure_notes=structure_notes
+        page_texts,
+        llm,
+        pdf_path=pdf_path,
+        concurrency_limit=map_concurrency_limit,
+        structure_notes=structure_notes,
+        structure_scan=structure_scan_result,
     )
     total_sections = sum(len(w.sections) for w in map_results)
     log(f"map: {len(map_results)} windows, {total_sections} sections found")

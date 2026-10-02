@@ -154,3 +154,41 @@ def test_finalize_identity_prefers_provisional_and_fills_gaps_from_map():
     result = assemble([window], provisional)
     assert result.identity.authority == "Acme Port Authority"  # provisional wins
     assert result.identity.currency == "ZAR"  # gap filled from Map
+
+
+def test_charge_context_narrows_to_pinpointed_base_and_modifier_pages():
+    """When Map pins a charge down to specific base_pages/modifier_pages,
+    Assemble must use those — narrower than the whole window/section
+    range — and keep them in separate lists."""
+    from extraction.schemas import ChargeWindowNote
+
+    notes = make_charge_notes()
+    notes = [
+        ChargeWindowNote(charge=CanonicalCharge.TOWAGE, present=True, notes="Base table on p.46, Annex H exception on p.56.", base_pages=[46], modifier_pages=[56])
+        if n.charge is CanonicalCharge.TOWAGE
+        else n
+        for n in notes
+    ]
+    window = _window(40, 58, [], charge_notes=notes)
+    sections = merge_sections([window])
+    contexts = build_charge_contexts(sections, [window])
+    towage = contexts[CanonicalCharge.TOWAGE]
+
+    assert towage.pages == [46]
+    assert towage.modifier_pages == [56]
+
+
+def test_charge_context_falls_back_to_whole_window_when_nothing_pinpointed():
+    """No base_pages/modifier_pages given at all (today's legacy
+    behaviour, or a window Map couldn't pin down) must still fall back
+    to the whole window range for base — the original safety net,
+    unchanged."""
+    window = _window(
+        5, 7, [], charge_notes=make_charge_notes({CanonicalCharge.TOWAGE: "Discussed somewhere in here."})
+    )
+    sections = merge_sections([window])
+    contexts = build_charge_contexts(sections, [window])
+    towage = contexts[CanonicalCharge.TOWAGE]
+
+    assert towage.pages == [5, 6, 7]
+    assert towage.modifier_pages == []
