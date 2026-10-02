@@ -2,6 +2,36 @@
 
 Found live, not yet fixed. Each entry states what's wrong, where, and why it matters.
 
+## A single hung LLM request can block a run for hours despite a configured 120s timeout + retry
+
+Found live (2026-10-02) during `structure-aware-extraction`'s TNPA regression
+run: the process sat alive for ~4h55m but accumulated only 17 seconds of
+actual CPU time (confirmed via `ps -p <pid> -o etime,time`) — not retrying,
+not looping, genuinely blocked on I/O the entire time. The log showed one
+real, logged `OpenAIConnectionError` on `light_dues` (correctly caught and
+recorded as a `SYSTEM_ERROR`, per the existing per-charge isolation), then
+the very next charge (`port_dues`) printed its "starting" line and never
+produced another log line again for the rest of those five hours.
+
+`extraction/llm.py`'s `default_llm()` sets `ChatOpenAI(timeout=120)`
+(`DEFAULT_REQUEST_TIMEOUT_SECONDS`), and `structured_call()`'s retry wrapper
+caps transient-error retries at 3 with a 15/30/60s backoff — on paper, a
+single call plus its retries should never block more than ~10 minutes.
+That bound did not hold here. Most likely explanation, not yet confirmed:
+`ChatOpenAI(timeout=...)`'s single float sets an overall/read timeout but
+may not bound every phase of the underlying `httpx` connection (e.g. a TCP
+connect that never completes and never errors, rather than a slow-but-live
+response) — worth checking whether `httpx.Timeout(connect=..., read=...,
+...)` needs to be configured explicitly rather than relying on
+`ChatOpenAI`'s single-value convenience parameter.
+
+**Not fixed, out of scope for `structure-aware-extraction`** — this is a
+pre-existing robustness gap in the shared LLM-calling layer (`extraction/llm.py`),
+not something this branch's work introduced, and reproducing it on demand
+(vs. waiting for another live network hiccup) needs its own investigation.
+Workaround used to keep this branch's own verification moving: killing a
+hung process and re-running, rather than waiting it out.
+
 ## Stage 2's section-shaped Map narrows less than intended on RAK — the fallback union dominates
 
 Built as part of `structure-aware-extraction`'s Stage 2 (section-shaped Map,
